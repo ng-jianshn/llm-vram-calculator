@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM VRAM Calculator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2"/>
+                        <path d="M8 21h8M12 17v4"/>
+                        <path d="M7 8h2M7 11h4"/>
+                    </svg>
+                    <h1>LLM VRAM Calculator</h1>
+                </div>
+                <p class="subtitle">Estimate GPU memory requirements for any Hugging Face model</p>
+            </div>
+        </header>
+
+        <!-- Configuration Section -->
+        <section class="config-section">
+            <!-- Model Input -->
+            <div class="input-card">
+                <label for="model-input" class="input-label">Model Name, ID, or Hugging Face URL</label>
+                <div class="input-wrapper">
+                    <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35"/>
+                    </svg>
+                    <input
+                        type="text"
+                        id="model-input"
+                        placeholder="e.g. meta-llama/Llama-3.1-8B-Instruct or https://huggingface.co/..."
+                        autocomplete="off"
+                    >
+                </div>
+                <div class="quick-examples">
+                    <span>Try:</span>
+                    <button onclick="setModel('meta-llama/Llama-3.1-8B-Instruct')">Llama 3.1 8B</button>
+                    <button onclick="setModel('mistralai/Mistral-7B-Instruct-v0.3')">Mistral 7B</button>
+                    <button onclick="setModel('microsoft/Phi-3-mini-4k-instruct')">Phi-3 Mini</button>
+                    <button onclick="setModel('Qwen/Qwen2.5-72B-Instruct')">Qwen 2.5 72B</button>
+                    <button onclick="setModel('google/gemma-2-27b-it')">Gemma 2 27B</button>
+                </div>
+            </div>
+
+            <!-- Inference Parameters -->
+            <div class="params-card">
+                <h3 class="card-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <path d="M12 15V3m0 12l-4-4m4 4l4-4"/>
+                        <path d="M2 17l.621 2.485A2 2 0 004.561 21h14.878a2 2 0 001.94-1.515L22 17"/>
+                    </svg>
+                    Inference Parameters
+                </h3>
+                <div class="params-grid">
+                    <div class="param-control">
+                        <label for="param-seq-length">Sequence Length (tokens)</label>
+                        <div class="param-input-row">
+                            <input type="range" id="param-seq-slider" min="128" max="131072" value="2048" step="128" oninput="syncSlider('seq')">
+                            <input type="number" id="param-seq-length" value="2048" min="128" max="131072" step="128" oninput="syncInput('seq')">
+                        </div>
+                        <div class="param-presets">
+                            <button onclick="setSeqLength(512)">512</button>
+                            <button onclick="setSeqLength(2048)" class="active">2K</button>
+                            <button onclick="setSeqLength(4096)">4K</button>
+                            <button onclick="setSeqLength(8192)">8K</button>
+                            <button onclick="setSeqLength(16384)">16K</button>
+                            <button onclick="setSeqLength(32768)">32K</button>
+                            <button onclick="setSeqLength(65536)">64K</button>
+                            <button onclick="setSeqLength(131072)">128K</button>
+                        </div>
+                    </div>
+                    <div class="param-control">
+                        <label for="param-batch-size">Batch Size</label>
+                        <div class="param-input-row">
+                            <input type="range" id="param-batch-slider" min="1" max="64" value="1" step="1" oninput="syncSlider('batch')">
+                            <input type="number" id="param-batch-size" value="1" min="1" max="256" step="1" oninput="syncInput('batch')">
+                        </div>
+                        <p class="param-hint">Sequences processed in parallel per request</p>
+                    </div>
+                    <div class="param-control">
+                        <label for="param-concurrent">Concurrent Users</label>
+                        <div class="param-input-row">
+                            <input type="range" id="param-concurrent-slider" min="1" max="128" value="1" step="1" oninput="syncSlider('concurrent')">
+                            <input type="number" id="param-concurrent" value="1" min="1" max="1024" step="1" oninput="syncInput('concurrent')">
+                        </div>
+                        <p class="param-hint">Simultaneous users hitting the inference server</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Precision Mode Selector -->
+            <div class="precision-card">
+                <h3 class="card-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                    </svg>
+                    Precision Modes
+                    <span class="precision-actions">
+                        <button class="precision-action-btn" onclick="selectAllFormats()">All</button>
+                        <button class="precision-action-btn" onclick="selectNoFormats()">None</button>
+                        <button class="precision-action-btn" onclick="selectPresetFormats('common')">Common</button>
+                        <button class="precision-action-btn" onclick="selectPresetFormats('gguf')">GGUF</button>
+                    </span>
+                </h3>
+                <div class="precision-grid" id="precision-grid">
+                    <label class="precision-pill" data-format="FP32">
+                        <input type="checkbox" value="FP32"> FP32 <span class="pill-bits">32-bit</span>
+                    </label>
+                    <label class="precision-pill selected" data-format="FP16">
+                        <input type="checkbox" value="FP16" checked> FP16 <span class="pill-bits">16-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="BF16">
+                        <input type="checkbox" value="BF16"> BF16 <span class="pill-bits">16-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="FP8">
+                        <input type="checkbox" value="FP8"> FP8 <span class="pill-bits">8-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="INT8">
+                        <input type="checkbox" value="INT8"> INT8 <span class="pill-bits">8-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="INT4">
+                        <input type="checkbox" value="INT4"> INT4 <span class="pill-bits">4-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="GPTQ">
+                        <input type="checkbox" value="GPTQ"> GPTQ <span class="pill-bits">4-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="AWQ">
+                        <input type="checkbox" value="AWQ"> AWQ <span class="pill-bits">4-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="GGUF_Q8">
+                        <input type="checkbox" value="GGUF_Q8"> GGUF Q8 <span class="pill-bits">8-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="GGUF_Q6">
+                        <input type="checkbox" value="GGUF_Q6"> GGUF Q6 <span class="pill-bits">6-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="GGUF_Q5">
+                        <input type="checkbox" value="GGUF_Q5"> GGUF Q5 <span class="pill-bits">5-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="GGUF_Q4">
+                        <input type="checkbox" value="GGUF_Q4"> GGUF Q4 <span class="pill-bits">4-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="GGUF_Q3">
+                        <input type="checkbox" value="GGUF_Q3"> GGUF Q3 <span class="pill-bits">3-bit</span>
+                    </label>
+                    <label class="precision-pill" data-format="GGUF_Q2">
+                        <input type="checkbox" value="GGUF_Q2"> GGUF Q2 <span class="pill-bits">2-bit</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Analyze Button -->
+            <button id="analyze-btn" class="analyze-btn-large" onclick="analyzeModel()">
+                <span class="btn-text">Analyze Model</span>
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+            </button>
+        </section>
+
+        <!-- Loading State -->
+        <section id="loading" class="loading-section hidden">
+            <div class="loading-card">
+                <div class="spinner"></div>
+                <p class="loading-text">Fetching model info from Hugging Face...</p>
+            </div>
+        </section>
+
+        <!-- Error State -->
+        <div id="error-section" class="error-section hidden">
+            <div class="error-card">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="error-icon">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M15 9l-6 6M9 9l6 6"/>
+                </svg>
+                <p id="error-message"></p>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <section id="results" class="results-section hidden">
+            <!-- Model Summary Card -->
+            <div class="model-summary-card">
+                <div class="summary-header">
+                    <div class="model-identity">
+                        <h2 id="result-model-id" class="model-name"></h2>
+                        <div class="model-badges">
+                            <span id="result-arch" class="badge badge-arch"></span>
+                            <span id="result-pipeline" class="badge badge-pipeline"></span>
+                            <span id="result-library" class="badge badge-lib"></span>
+                        </div>
+                        <div id="model-tags" class="model-tags hidden"></div>
+                    </div>
+                    <div class="param-display">
+                        <span class="param-number" id="result-params"></span>
+                        <span class="param-label">Parameters</span>
+                    </div>
+                </div>
+                <div id="result-context" class="context-info hidden">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                        <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
+                    </svg>
+                    <span>Max Context Length: <strong id="result-ctx-val"></strong> tokens</span>
+                </div>
+            </div>
+
+            <!-- Config Warning Banner -->
+            <div id="config-warning" class="config-warning hidden">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <span id="config-warning-text"></span>
+            </div>
+
+            <!-- KV-Cache Breakdown -->
+            <div id="kv-breakdown" class="kv-card hidden">
+                <h3 class="card-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z"/>
+                    </svg>
+                    Memory Breakdown
+                </h3>
+                <div class="kv-stats">
+                    <div class="kv-stat">
+                        <span class="kv-stat-value" id="kv-cache-val">—</span>
+                        <span class="kv-stat-label">KV-Cache</span>
+                    </div>
+                    <div class="kv-stat">
+                        <span class="kv-stat-value" id="kv-overhead-val">—</span>
+                        <span class="kv-stat-label">Activations</span>
+                    </div>
+                    <div class="kv-stat">
+                        <span class="kv-stat-value" id="kv-sequences-val">—</span>
+                        <span class="kv-stat-label">Total Sequences</span>
+                    </div>
+                    <div class="kv-stat">
+                        <span class="kv-stat-value" id="kv-arch-val">—</span>
+                        <span class="kv-stat-label">Architecture</span>
+                    </div>
+                </div>
+                <p class="kv-note" id="kv-arch-note"></p>
+            </div>
+
+            <!-- VRAM Table -->
+            <div class="vram-card">
+                <h3 class="card-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+                        <path d="M1 10h22"/>
+                    </svg>
+                    Memory Requirements by Quantisation
+                </h3>
+                <div class="table-wrapper">
+                    <table id="vram-table">
+                        <thead>
+                            <tr>
+                                <th>Format</th>
+                                <th>Bits</th>
+                                <th>Weights</th>
+                                <th>KV-Cache</th>
+                                <th>Total VRAM</th>
+                                <th class="desc-col">Description</th>
+                                <th>Azure VMs</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vram-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Azure VM GPU Compatibility -->
+            <div class="gpu-card">
+                <h3 class="card-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <rect x="2" y="3" width="20" height="14" rx="2"/>
+                        <path d="M8 21h8M12 17v4"/>
+                    </svg>
+                    Azure VM Compatibility
+                    <span class="gpu-format-label">for <select id="gpu-format-select" onchange="renderGPUCompat()"></select></span>
+                </h3>
+                <div id="gpu-grid" class="gpu-grid"></div>
+            </div>
+
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Data sourced from <a href="https://huggingface.co" target="_blank">Hugging Face Hub</a>. VRAM = model weights + KV-cache (FP16, per your params) + activation overhead. Actual usage may vary with framework and implementation.</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

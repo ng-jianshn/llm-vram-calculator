@@ -1,0 +1,7 @@
+flask>=3.0
+requests>=2.31
+openai>=1.30
+azure-identity>=1.16
+python-dotenv>=1.0
+gunicorn>=22.0
+huggingface_hub
