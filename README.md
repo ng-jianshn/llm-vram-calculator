@@ -8,14 +8,12 @@ Supports dense models, **GQA**, **MoE**, and **MLA** architectures automatically
 ## Features
 
 - **Any HuggingFace model** — enter a model ID, name, or URL (e.g. `meta-llama/Llama-3.1-8B-Instruct`)
-- **Automatic architecture detection** — reads `config.json` or `params.json` to detect layers, hidden size, KV heads, MoE experts, MLA latent dims
+- **Automatic architecture detection** — reads `config.json` or `params.json` from hugging face model card to detect layers, hidden size, KV heads, MoE experts, MLA latent dims
 - **14 quantisation formats** — FP32, FP16, BF16, FP8, INT8, INT4, GPTQ, AWQ, GGUF Q2–Q8
 - **MoE & MLA aware** — correctly calculates active parameters and compressed KV cache
 - **Theoretical TPM** — estimates tokens/minute for each Azure GPU VM based on memory bandwidth
 - **20+ Azure VM SKUs** — NV A10, NC T4, NC A100, NC H100 NVL, ND A100, ND H100 SXM, ND H200, ND MI300X
-- **AI-powered analysis** — Azure OpenAI provides deployment tips and quantisation recommendations
-- **Gated model support** — set `HF_TOKEN` to access private/gated model configs
-- **Modern dark UI** — responsive glassmorphism design with MoE/MLA tags
+- **Gated model support** — Reach out to @ngjason to access private/gated model configs
 
 ---
 
@@ -47,7 +45,7 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxx
 ### 3. Run
 
 ```bash
-python app_aoai.py
+python3 app_aoai.py
 ```
 
 Open [http://localhost:5000](http://localhost:5000).
@@ -57,6 +55,7 @@ Open [http://localhost:5000](http://localhost:5000).
 ```bash
 docker build --platform linux/amd64 --provenance=false --sbom=false -t llm-sizing .
 docker run -p 5000:5000 llm-sizing
+docker push <YOUR REGISTRY>
 ```
 
 ---
