@@ -1,6 +1,0 @@
-{
-  "name": "gh-main",
-  "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:ngjason_microsoft/llm-vram-calculator:ref:refs/heads/main",
-  "audiences": ["api://AzureADTokenExchange"]
-}
