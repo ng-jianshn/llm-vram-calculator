@@ -1002,3 +1002,217 @@ td .gpu-count-badge {
     .header h1 { font-size: 1.3rem; }
     .quick-examples button { font-size: 0.72rem; padding: 3px 8px; }
 }
+
+
+/* =========================================
+   Run Benchmark button + Modal
+   ========================================= */
+.bench-run-btn {
+    margin-top: 0.6rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.45rem 0.9rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-light) 100%);
+    border: none;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    transition: var(--transition);
+    box-shadow: 0 2px 8px var(--accent-glow);
+}
+.bench-run-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px var(--accent-glow);
+}
+
+.bench-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.bench-modal.hidden { display: none; }
+
+.bench-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.75);
+    backdrop-filter: blur(4px);
+}
+
+.bench-modal-content {
+    position: relative;
+    width: min(720px, 92vw);
+    max-height: 90vh;
+    overflow-y: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    color: var(--text-primary);
+}
+
+.bench-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+}
+.bench-modal-header h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+.bench-modal-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.6rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0.25rem;
+}
+.bench-modal-close:hover { color: var(--text-primary); }
+
+.bench-modal-body {
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+}
+
+.bench-target-info {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.6rem 0.85rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    font-size: 0.9rem;
+}
+.bench-target-label { color: var(--text-secondary); }
+#bench-target-vm { font-weight: 600; color: var(--accent-light); }
+
+.bench-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    flex: 1;
+}
+.bench-field label {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.bench-field input,
+.bench-field select {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    padding: 0.55rem 0.7rem;
+    font-size: 0.9rem;
+    font-family: inherit;
+}
+.bench-field input:focus,
+.bench-field select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.bench-field input[readonly] {
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.bench-row {
+    display: flex;
+    gap: 0.75rem;
+}
+.bench-row .bench-field { flex: 1 1 0; }
+
+.bench-cmd-preview {
+    background: #0d1224;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    padding: 0.75rem 0.9rem;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    font-size: 0.8rem;
+    color: #cbd5e1;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.bench-result {
+    padding: 0.75rem 0.9rem;
+    border-radius: var(--radius-xs);
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+.bench-result.info {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+}
+.bench-result.success {
+    background: var(--green-bg);
+    border: 1px solid var(--green-border);
+    color: var(--green);
+}
+.bench-result.error {
+    background: var(--red-bg);
+    border: 1px solid var(--red-border);
+    color: var(--red);
+}
+.bench-result code {
+    background: rgba(255, 255, 255, 0.06);
+    padding: 0.05rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.82rem;
+}
+
+.bench-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    padding: 0.9rem 1.25rem;
+    border-top: 1px solid var(--border);
+}
+
+.bench-btn {
+    padding: 0.55rem 1.1rem;
+    border-radius: var(--radius-xs);
+    border: 1px solid transparent;
+    font-weight: 600;
+    font-size: 0.88rem;
+    cursor: pointer;
+    transition: var(--transition);
+}
+.bench-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.bench-btn-secondary {
+    background: transparent;
+    border-color: var(--border-light);
+    color: var(--text-secondary);
+}
+.bench-btn-secondary:hover {
+    color: var(--text-primary);
+    border-color: var(--text-secondary);
+}
+.bench-btn-primary {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-light) 100%);
+    color: #fff;
+    box-shadow: 0 2px 8px var(--accent-glow);
+}
+.bench-btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px var(--accent-glow);
+}

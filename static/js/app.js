@@ -332,6 +332,15 @@ function renderGPUCompat() {
                 </div>`;
         }
 
+        const benchBtnHtml = (gpu.fits && BENCHMARK_ENABLED_VMS.has(gpu.name))
+            ? `<button class="bench-run-btn" onclick="openBenchModal('${gpu.name.replace(/'/g, "\\'")}')">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                      <polygon points="5 3 19 12 5 21 5 3"/>
+                  </svg>
+                  Run Benchmark
+               </button>`
+            : '';
+
         item.innerHTML = `
             <div class="gpu-info">
                 <div class="gpu-name">${gpu.name}</div>
@@ -339,6 +348,7 @@ function renderGPUCompat() {
                 <span class="gpu-series-badge">${gpu.series}</span>
                 ${multiGpuNote}
                 ${throughputHtml}
+                ${benchBtnHtml}
             </div>
             <div class="gpu-status ${statusClass}">
                 ${statusIcon} ${headroomText}
@@ -360,3 +370,155 @@ function formatTPM(tpm) {
     if (tpm >= 1_000) return (tpm / 1_000).toFixed(1) + 'K';
     return tpm.toLocaleString();
 }
+
+// =========================================
+//  Benchmark Modal
+// =========================================
+const BENCHMARK_ENABLED_VMS = new Set(['NC40ads H100 v5', 'NC80adis H100 v5']);
+
+function openBenchModal(gpuName) {
+    if (!currentData) return;
+    const modelId = currentData.model_id;
+    document.getElementById('bench-target-vm').textContent = gpuName;
+    document.getElementById('bench-model').value = modelId;
+    document.getElementById('bench-tokenizer').value = modelId;
+    document.getElementById('bench-dataset').value = 'random';
+    document.getElementById('bench-result').classList.add('hidden');
+    document.getElementById('bench-result').textContent = '';
+
+    const submitBtn = document.getElementById('bench-submit-btn');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Run Benchmark';
+    submitBtn.dataset.gpuSku = gpuName;
+
+    updateBenchDatasetFields();
+
+    const modal = document.getElementById('bench-modal');
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeBenchModal() {
+    const modal = document.getElementById('bench-modal');
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+function updateBenchDatasetFields() {
+    const ds = document.getElementById('bench-dataset').value;
+    document.getElementById('bench-random-fields').classList.toggle('hidden', ds !== 'random');
+    document.getElementById('bench-sharegpt-fields').classList.toggle('hidden', ds !== 'sharegpt');
+    refreshBenchCmdPreview();
+}
+
+function collectBenchPayload() {
+    const ds = document.getElementById('bench-dataset').value;
+    const submitBtn = document.getElementById('bench-submit-btn');
+    const payload = {
+        gpu_sku: submitBtn.dataset.gpuSku,
+        model: document.getElementById('bench-model').value,
+        tokenizer: document.getElementById('bench-tokenizer').value,
+        dataset_name: ds,
+        num_prompts: parseInt(document.getElementById('bench-num-prompts').value) || 1000,
+        max_concurrency: parseInt(document.getElementById('bench-concurrency').value) || 32,
+        seed: 42,
+    };
+    if (ds === 'random') {
+        payload.random_input_len = parseInt(document.getElementById('bench-rand-input').value) || 1024;
+        payload.random_output_len = parseInt(document.getElementById('bench-rand-output').value) || 128;
+        payload.random_prefix_len = parseInt(document.getElementById('bench-rand-prefix').value) || 0;
+        payload.random_range_ratio = parseFloat(document.getElementById('bench-rand-ratio').value) || 0.0;
+    } else {
+        payload.dataset_path = document.getElementById('bench-dataset-path').value
+            || './ShareGPT_V3_unfiltered_cleaned_split.json';
+    }
+    return payload;
+}
+
+function buildBenchCommand(p) {
+    const parts = [
+        'vllm bench serve',
+        `--base-url http://localhost:8000`,
+        `--model ${p.model}`,
+        `--tokenizer ${p.tokenizer}`,
+        `--dataset-name ${p.dataset_name}`,
+    ];
+    if (p.dataset_name === 'random') {
+        parts.push(`--random-input-len ${p.random_input_len}`);
+        parts.push(`--random-output-len ${p.random_output_len}`);
+        parts.push(`--random-prefix-len ${p.random_prefix_len}`);
+        parts.push(`--random-range-ratio ${p.random_range_ratio}`);
+    } else {
+        parts.push(`--dataset-path ${p.dataset_path}`);
+    }
+    parts.push(`--num-prompts ${p.num_prompts}`);
+    parts.push(`--max-concurrency ${p.max_concurrency}`);
+    parts.push(`--seed ${p.seed}`);
+    return parts.join(' \\\n    ');
+}
+
+function refreshBenchCmdPreview() {
+    const preview = document.getElementById('bench-cmd-preview');
+    if (!preview) return;
+    try {
+        preview.textContent = buildBenchCommand(collectBenchPayload());
+    } catch (_) { /* ignore until modal fully rendered */ }
+}
+
+async function submitBenchmark() {
+    const payload = collectBenchPayload();
+    const submitBtn = document.getElementById('bench-submit-btn');
+    const resultEl = document.getElementById('bench-result');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting…';
+    resultEl.classList.remove('hidden');
+    resultEl.className = 'bench-result info';
+    resultEl.textContent = 'Submitting benchmark job to Kubernetes…';
+
+    try {
+        const resp = await fetch('/api/benchmark', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            resultEl.className = 'bench-result error';
+            resultEl.textContent = data.error || 'Failed to submit benchmark.';
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Run Benchmark';
+            return;
+        }
+        resultEl.className = 'bench-result success';
+        resultEl.innerHTML =
+            `<strong>Benchmark submitted.</strong><br>` +
+            `Run ID: <code>${data.run_id}</code><br>` +
+            `Namespace: <code>${data.namespace}</code><br>` +
+            `Deployment: <code>${data.deployment}</code><br>` +
+            `Service: <code>${data.service}</code><br>` +
+            `Job: <code>${data.job}</code><br>` +
+            `<br>Tail logs: <code>kubectl logs -n ${data.namespace} -f job/${data.job}</code>`;
+        submitBtn.textContent = 'Submitted';
+    } catch (err) {
+        console.error(err);
+        resultEl.className = 'bench-result error';
+        resultEl.textContent = 'Network error. Is the server running?';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Run Benchmark';
+    }
+}
+
+// Refresh command preview as user edits inputs
+document.addEventListener('input', (e) => {
+    if (e.target && e.target.closest && e.target.closest('#bench-modal')) {
+        refreshBenchCmdPreview();
+    }
+});
+
+// Esc closes modal
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        const modal = document.getElementById('bench-modal');
+        if (modal && !modal.classList.contains('hidden')) closeBenchModal();
+    }
+});

@@ -8,6 +8,8 @@ from openai import AzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from dotenv import load_dotenv
 
+import benchmark_k8s
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -670,6 +672,38 @@ def analyze():
     except Exception as e:
         app.logger.exception(f"Unexpected error analyzing model '{model_id}'")
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+
+
+@app.route("/api/benchmark", methods=["POST"])
+def submit_benchmark():
+    """Provision vLLM Deployment + Service + benchmark Job in Kubernetes."""
+    payload = request.get_json(force=True) or {}
+    try:
+        result = benchmark_k8s.submit_benchmark(payload)
+        return jsonify({"status": "submitted", **result})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        app.logger.exception("Failed to submit benchmark job")
+        return jsonify({"error": f"Failed to submit benchmark: {e}"}), 500
+
+
+@app.route("/api/benchmark/<run_id>", methods=["GET"])
+def benchmark_status(run_id: str):
+    try:
+        return jsonify(benchmark_k8s.get_status(run_id))
+    except Exception as e:
+        app.logger.exception("Failed to get benchmark status")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/benchmark/<run_id>", methods=["DELETE"])
+def benchmark_cleanup(run_id: str):
+    try:
+        return jsonify(benchmark_k8s.cleanup(run_id))
+    except Exception as e:
+        app.logger.exception("Failed to clean up benchmark")
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":

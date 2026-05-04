@@ -302,5 +302,100 @@
     </div>
 
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+
+    <!-- ============== Benchmark Modal ============== -->
+    <div id="bench-modal" class="bench-modal hidden" aria-hidden="true">
+        <div class="bench-modal-backdrop" onclick="closeBenchModal()"></div>
+        <div class="bench-modal-content" role="dialog" aria-labelledby="bench-modal-title">
+            <div class="bench-modal-header">
+                <h3 id="bench-modal-title">Run Benchmark</h3>
+                <button class="bench-modal-close" onclick="closeBenchModal()" aria-label="Close">&times;</button>
+            </div>
+            <div class="bench-modal-body">
+                <div class="bench-target-info">
+                    <span class="bench-target-label">Target VM:</span>
+                    <span id="bench-target-vm">—</span>
+                </div>
+
+                <div class="bench-field">
+                    <label for="bench-dataset">Dataset</label>
+                    <select id="bench-dataset" onchange="updateBenchDatasetFields()">
+                        <option value="random">random</option>
+                        <option value="sharegpt">sharegpt</option>
+                    </select>
+                </div>
+
+                <div class="bench-field">
+                    <label for="bench-model">Model</label>
+                    <input type="text" id="bench-model" readonly>
+                </div>
+                <div class="bench-field">
+                    <label for="bench-tokenizer">Tokenizer</label>
+                    <input type="text" id="bench-tokenizer" readonly>
+                </div>
+
+                <!-- Random-only fields -->
+                <div id="bench-random-fields">
+                    <div class="bench-row">
+                        <div class="bench-field">
+                            <label for="bench-rand-input">Random Input Len</label>
+                            <input type="number" id="bench-rand-input" value="1024" min="1">
+                        </div>
+                        <div class="bench-field">
+                            <label for="bench-rand-output">Random Output Len</label>
+                            <input type="number" id="bench-rand-output" value="128" min="1">
+                        </div>
+                    </div>
+                    <div class="bench-row">
+                        <div class="bench-field">
+                            <label for="bench-rand-prefix">Random Prefix Len</label>
+                            <input type="number" id="bench-rand-prefix" value="0" min="0">
+                        </div>
+                        <div class="bench-field">
+                            <label for="bench-rand-ratio">Random Range Ratio</label>
+                            <input type="number" id="bench-rand-ratio" value="0.0" min="0" max="1" step="0.05">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ShareGPT-only fields -->
+                <div id="bench-sharegpt-fields" class="hidden">
+                    <div class="bench-field">
+                        <label for="bench-dataset-path">Dataset Path</label>
+                        <input type="text" id="bench-dataset-path"
+                               value="./ShareGPT_V3_unfiltered_cleaned_split.json">
+                    </div>
+                </div>
+
+                <div class="bench-row">
+                    <div class="bench-field">
+                        <label for="bench-num-prompts">Num Prompts</label>
+                        <input type="number" id="bench-num-prompts" value="1000" min="1">
+                    </div>
+                    <div class="bench-field">
+                        <label for="bench-concurrency">Max Concurrency</label>
+                        <input type="number" id="bench-concurrency" value="32" min="1">
+                    </div>
+                    <div class="bench-field">
+                        <label for="bench-seed">Seed</label>
+                        <input type="number" id="bench-seed" value="42" readonly>
+                    </div>
+                </div>
+
+                <div class="bench-field">
+                    <label>Generated Command Preview</label>
+                    <pre id="bench-cmd-preview" class="bench-cmd-preview"></pre>
+                </div>
+
+                <div id="bench-result" class="bench-result hidden"></div>
+            </div>
+            <div class="bench-modal-footer">
+                <button class="bench-btn bench-btn-secondary" onclick="closeBenchModal()">Cancel</button>
+                <button id="bench-submit-btn" class="bench-btn bench-btn-primary" onclick="submitBenchmark()">
+                    Run Benchmark
+                </button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
