@@ -1,0 +1,69 @@
+name: Build & Deploy to Azure Container Apps
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Required for Azure OIDC federated login (no client secret needed)
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ACR_NAME: jianshn                       # ACR registry name (no .azurecr.io)
+  IMAGE_NAME: llm-sizing                  # repository inside ACR
+  RESOURCE_GROUP: ${{ vars.AZURE_RG }}    # set as repo/org Variable
+  CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}  # set as repo/org Variable
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download ShareGPT dataset
+        env:
+          DATASET_URL: ${{ vars.SHAREGPT_URL }}
+        run: |
+          set -euo pipefail
+          OUT=ShareGPT_V3_unfiltered_cleaned_split.json
+          : "${DATASET_URL:?Set repo Variable SHAREGPT_URL to the dataset download URL}"
+          echo "Downloading $DATASET_URL"
+          curl -fL --retry 5 --retry-delay 10 -o "$OUT" "$DATASET_URL"
+          ls -lh "$OUT"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Compute image tag
+        id: tag
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push image with ACR Tasks
+        run: |
+          az acr build \
+            --registry "$ACR_NAME" \
+            --image "$IMAGE_NAME:${{ steps.tag.outputs.tag }}" \
+            --image "$IMAGE_NAME:latest" \
+            --file Dockerfile \
+            .
+
+      - name: Update Container App to new image
+        run: |
+          az containerapp update \
+            --name "$CONTAINER_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_NAME.azurecr.io/$IMAGE_NAME:${{ steps.tag.outputs.tag }}"
+
+      - name: Show new revision
+        run: |
+          az containerapp show \
+            --name "$CONTAINER_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "properties.latestRevisionName" -o tsv

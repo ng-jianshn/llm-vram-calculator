@@ -163,7 +163,7 @@ def _build_deployment(run_id: str, model: str, n_gpus: int,
         command=["/bin/sh", "-c"],
         args=[
             f"vllm serve {model} "
-            f"--host 0.0.0.0 --port 8000 "
+            # f"--host 0.0.0.0 --port 8000 "
             f"--tensor-parallel-size {n_gpus} "
             f"--trust-remote-code "
             f"--enable-prefix-caching "
