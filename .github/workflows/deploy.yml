@@ -48,6 +48,8 @@ jobs:
 
       - name: Build & push image with ACR Tasks
         run: |
+          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          az account show --query "{name:name, id:id}" -o table
           az acr build \
             --registry "$ACR_NAME" \
             --resource-group "$ACR_RESOURCE_GROUP" \
