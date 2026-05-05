@@ -14,6 +14,7 @@ env:
   ACR_NAME: jianshn                       # ACR registry name (no .azurecr.io)
   IMAGE_NAME: llm-sizing                  # repository inside ACR
   RESOURCE_GROUP: ${{ vars.AZURE_RG }}    # set as repo/org Variable
+  ACR_RESOURCE_GROUP: ${{ vars.AZURE_ACR_RG }}    # ACR's resource group (may differ from app RG)
   CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}  # set as repo/org Variable
 
 jobs:
@@ -49,6 +50,7 @@ jobs:
         run: |
           az acr build \
             --registry "$ACR_NAME" \
+            --resource-group "$ACR_RESOURCE_GROUP" \
             --image "$IMAGE_NAME:${{ steps.tag.outputs.tag }}" \
             --image "$IMAGE_NAME:latest" \
             --file Dockerfile \
