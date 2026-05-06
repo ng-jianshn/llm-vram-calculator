@@ -250,8 +250,122 @@ function renderResults(data) {
     }
     renderGPUCompat();
 
+    // LLM analysis (markdown)
+    renderLLMAnalysis(data.llm_analysis);
+
     results.classList.remove('hidden');
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderLLMAnalysis(markdown) {
+    const card = document.getElementById('llm-analysis-card');
+    const content = document.getElementById('llm-analysis-content');
+    if (!card || !content) return;
+    if (!markdown) {
+        card.classList.add('hidden');
+        content.innerHTML = '';
+        return;
+    }
+    if (typeof marked !== 'undefined' && marked.parse) {
+        content.innerHTML = marked.parse(markdown);
+    } else {
+        // Fallback: plain text in <pre>
+        const pre = document.createElement('pre');
+        pre.textContent = markdown;
+        content.innerHTML = '';
+        content.appendChild(pre);
+    }
+    card.classList.remove('hidden');
+    // Reset chat history each time a new analysis is rendered
+    clearChat();
+}
+
+// ---- Follow-up chat ----
+let chatHistory = [];
+
+function clearChat() {
+    chatHistory = [];
+    const msgs = document.getElementById('llm-chat-messages');
+    if (msgs) msgs.innerHTML = '';
+}
+
+function appendChatMessage(role, markdown, opts) {
+    opts = opts || {};
+    const msgs = document.getElementById('llm-chat-messages');
+    if (!msgs) return null;
+    const wrap = document.createElement('div');
+    wrap.className = 'llm-chat-msg llm-chat-msg-' + role;
+    if (opts.pending) wrap.classList.add('pending');
+    const bubble = document.createElement('div');
+    bubble.className = 'llm-chat-bubble';
+    if (role === 'assistant' && typeof marked !== 'undefined' && marked.parse) {
+        bubble.innerHTML = marked.parse(markdown || '');
+    } else {
+        bubble.textContent = markdown || '';
+    }
+    wrap.appendChild(bubble);
+    msgs.appendChild(wrap);
+    msgs.scrollTop = msgs.scrollHeight;
+    return wrap;
+}
+
+async function sendChat(e) {
+    if (e) e.preventDefault();
+    const input = document.getElementById('llm-chat-input');
+    const sendBtn = document.getElementById('llm-chat-send');
+    const text = (input.value || '').trim();
+    if (!text) return;
+    if (!currentData) {
+        appendChatMessage('assistant', '_Run an analysis first before asking follow-ups._');
+        return;
+    }
+
+    // Render user message
+    appendChatMessage('user', text);
+    chatHistory.push({ role: 'user', content: text });
+    input.value = '';
+    input.disabled = true;
+    sendBtn.disabled = true;
+
+    // Pending placeholder
+    const pending = appendChatMessage('assistant', '…thinking…', { pending: true });
+
+    try {
+        const resp = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                messages: chatHistory,
+                context: {
+                    model_id: currentData.model_id,
+                    architecture: currentData.architecture,
+                    param_billions: currentData.param_billions,
+                    kv_info: currentData.kv_info,
+                    vram_table: currentData.vram_table,
+                    llm_analysis: currentData.llm_analysis,
+                },
+            }),
+        });
+        const data = await resp.json();
+        if (pending) pending.remove();
+        if (!resp.ok) {
+            appendChatMessage('assistant', '⚠️ ' + (data.error || 'Chat request failed.'));
+            chatHistory.pop(); // remove the user message that failed
+        } else {
+            const reply = data.reply || '(empty response)';
+            appendChatMessage('assistant', reply);
+            chatHistory.push({ role: 'assistant', content: reply });
+        }
+    } catch (err) {
+        if (pending) pending.remove();
+        appendChatMessage('assistant', '⚠️ Network error talking to /api/chat.');
+        console.error(err);
+        chatHistory.pop();
+    } finally {
+        input.disabled = false;
+        sendBtn.disabled = false;
+        input.focus();
+    }
 }
 
 // ---- VRAM Table ----

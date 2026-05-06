@@ -717,5 +717,100 @@ def benchmark_cleanup(run_id: str):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/chat", methods=["POST"])
+def chat():
+    """Follow-up Q&A about a previously analyzed model.
+
+    Request body:
+      {
+        "messages": [{"role": "user"|"assistant", "content": "..."}, ...],
+        "context": {
+            "model_id": str,
+            "param_billions": float,
+            "architecture": str,
+            "kv_info": {...},
+            "vram_table": [...],
+            "llm_analysis": str (the prior analysis markdown)
+        }
+      }
+    """
+    payload = request.get_json(force=True) or {}
+    messages = payload.get("messages") or []
+    context = payload.get("context") or {}
+
+    if not messages or not isinstance(messages, list):
+        return jsonify({"error": "messages[] is required"}), 400
+
+    # Sanitize/limit message history
+    cleaned: list[dict] = []
+    for m in messages[-20:]:  # cap at last 20 turns
+        role = m.get("role")
+        content = (m.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            cleaned.append({"role": role, "content": content[:4000]})
+    if not cleaned or cleaned[-1]["role"] != "user":
+        return jsonify({"error": "last message must be from user"}), 400
+
+    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1")
+    try:
+        client = _get_aoai_client()
+    except Exception as e:
+        return jsonify({"error": f"Azure OpenAI client init failed: {e}"}), 500
+
+    # Build a compact context block from the analysis
+    ctx_lines = []
+    if context.get("model_id"):
+        ctx_lines.append(f"Model: {context['model_id']}")
+    if context.get("architecture"):
+        ctx_lines.append(f"Architecture: {context['architecture']}")
+    if context.get("param_billions") is not None:
+        ctx_lines.append(f"Parameters: {context['param_billions']}B")
+    kv = context.get("kv_info") or {}
+    if kv:
+        ctx_lines.append(
+            f"KV/arch: layers={kv.get('num_layers')}, hidden={kv.get('hidden_size')}, "
+            f"kv_heads={kv.get('num_kv_heads')}, head_dim={kv.get('head_dim')}, "
+            f"seq_len={kv.get('sequence_length')}, batch={kv.get('batch_size')}, "
+            f"users={kv.get('concurrent_users')}, kv_cache_gb={kv.get('kv_cache_gb')}, "
+            f"is_moe={kv.get('is_moe')}, is_mla={kv.get('is_mla')}, "
+            f"active_params_b={kv.get('active_param_billions')}"
+        )
+    vram = context.get("vram_table") or []
+    if vram:
+        ctx_lines.append("VRAM by quantization:")
+        for row in vram[:10]:
+            ctx_lines.append(
+                f"  {row.get('label')}: weights={row.get('model_size_gb')}GB, "
+                f"total={row.get('vram_required_gb')}GB"
+            )
+    prior = context.get("llm_analysis")
+    if prior:
+        ctx_lines.append("\nPrior analysis (for reference):\n" + str(prior)[:3500])
+
+    context_str = "\n".join(ctx_lines) if ctx_lines else "(no prior analysis context)"
+
+    system_prompt = (
+        "You are an expert ML engineer answering follow-up questions about an LLM "
+        "model's deployment, VRAM footprint, throughput, and Azure VM SKU choices. "
+        "You have access to the prior analysis as reference context. "
+        "Answer concisely (under 250 words), use markdown, be specific to THIS model, "
+        "and acknowledge uncertainty when appropriate. If the question is unrelated "
+        "to LLM deployment, GPU sizing, or this model, politely redirect.\n\n"
+        f"=== Analysis Context ===\n{context_str}\n=== End Context ==="
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=deployment,
+            messages=[{"role": "system", "content": system_prompt}, *cleaned],
+            temperature=0.3,
+            max_tokens=600,
+        )
+        return jsonify({"reply": response.choices[0].message.content})
+    except Exception as e:
+        app.logger.exception("Chat completion failed")
+        return jsonify({"error": f"Chat failed: {e}"}), 500
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

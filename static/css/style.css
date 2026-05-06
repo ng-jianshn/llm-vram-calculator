@@ -1216,3 +1216,176 @@ td .gpu-count-badge {
     transform: translateY(-1px);
     box-shadow: 0 4px 14px var(--accent-glow);
 }
+
+/* ---- LLM Analysis (Azure OpenAI) ---- */
+.llm-analysis-content {
+    color: var(--text-primary, #1f2937);
+    font-size: 14px;
+    line-height: 1.6;
+}
+.llm-analysis-content h1,
+.llm-analysis-content h2,
+.llm-analysis-content h3,
+.llm-analysis-content h4 {
+    margin: 1.1em 0 0.4em;
+    font-weight: 600;
+    color: var(--text-primary, #111827);
+}
+.llm-analysis-content h1 { font-size: 1.25rem; }
+.llm-analysis-content h2 { font-size: 1.15rem; }
+.llm-analysis-content h3 { font-size: 1.05rem; }
+.llm-analysis-content h4 { font-size: 1rem; }
+.llm-analysis-content p { margin: 0.5em 0; }
+.llm-analysis-content ul,
+.llm-analysis-content ol { margin: 0.5em 0 0.8em 1.4em; padding: 0; }
+.llm-analysis-content li { margin: 0.25em 0; }
+.llm-analysis-content code {
+    background: rgba(127, 127, 127, 0.12);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+    font-family: 'Fira Code', Consolas, monospace;
+    font-size: 0.9em;
+}
+.llm-analysis-content pre {
+    background: rgba(127, 127, 127, 0.08);
+    padding: 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 0.85em;
+}
+.llm-analysis-content pre code { background: transparent; padding: 0; }
+.llm-analysis-content table {
+    border-collapse: collapse;
+    margin: 0.6em 0;
+    width: 100%;
+    font-size: 0.92em;
+}
+.llm-analysis-content th,
+.llm-analysis-content td {
+    border: 1px solid rgba(127, 127, 127, 0.25);
+    padding: 6px 10px;
+    text-align: left;
+}
+.llm-analysis-content th { background: rgba(127, 127, 127, 0.08); font-weight: 600; }
+.llm-analysis-content blockquote {
+    border-left: 3px solid var(--accent, #6366f1);
+    padding: 0.2em 0.8em;
+    margin: 0.6em 0;
+    color: var(--text-secondary, #4b5563);
+}
+.llm-analysis-content strong { font-weight: 600; }
+
+/* ---- LLM Follow-up Chat ---- */
+.llm-chat {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(127,127,127,0.2);
+}
+.llm-chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+.llm-chat-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary, #4b5563);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.llm-chat-clear {
+    background: transparent;
+    border: 1px solid rgba(127,127,127,0.3);
+    color: var(--text-secondary, #6b7280);
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.llm-chat-clear:hover { background: rgba(127,127,127,0.08); }
+
+.llm-chat-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 360px;
+    overflow-y: auto;
+    padding: 4px 2px;
+    margin-bottom: 10px;
+}
+.llm-chat-msg { display: flex; }
+.llm-chat-msg-user { justify-content: flex-end; }
+.llm-chat-msg-assistant { justify-content: flex-start; }
+.llm-chat-bubble {
+    max-width: 85%;
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    word-wrap: break-word;
+}
+.llm-chat-msg-user .llm-chat-bubble {
+    background: var(--accent, #6366f1);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+}
+.llm-chat-msg-assistant .llm-chat-bubble {
+    background: rgba(127,127,127,0.10);
+    color: var(--text-primary, #111827);
+    border-bottom-left-radius: 4px;
+}
+.llm-chat-msg.pending .llm-chat-bubble {
+    opacity: 0.6;
+    font-style: italic;
+}
+.llm-chat-bubble p:first-child { margin-top: 0; }
+.llm-chat-bubble p:last-child { margin-bottom: 0; }
+.llm-chat-bubble code {
+    background: rgba(127,127,127,0.18);
+    padding: 0.05em 0.3em;
+    border-radius: 4px;
+    font-family: 'Fira Code', Consolas, monospace;
+    font-size: 0.88em;
+}
+.llm-chat-msg-user .llm-chat-bubble code { background: rgba(255,255,255,0.22); }
+
+.llm-chat-form {
+    display: flex;
+    gap: 8px;
+}
+.llm-chat-form input[type="text"] {
+    flex: 1;
+    padding: 9px 12px;
+    border: 1px solid rgba(127,127,127,0.3);
+    border-radius: 8px;
+    font: inherit;
+    font-size: 14px;
+    background: var(--bg-secondary, #fff);
+    color: var(--text-primary, #111827);
+}
+.llm-chat-form input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent, #6366f1);
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+}
+.llm-chat-send {
+    padding: 9px 18px;
+    background: var(--accent, #6366f1);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+}
+.llm-chat-send:hover { filter: brightness(1.05); }
+.llm-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.llm-chat-disclaimer {
+    margin: 10px 0 0;
+    font-size: 11.5px;
+    color: var(--text-secondary, #6b7280);
+    font-style: italic;
+    line-height: 1.45;
+}
