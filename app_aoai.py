@@ -516,7 +516,8 @@ def gpu_compatibility(vram_required: float, model_size_gb: float = 0,
 
 def get_llm_analysis(model_id: str, model_info: dict, config: dict | None,
                      param_billions: float | None, vram_table: list[dict] | None,
-                     kv_info: dict | None = None) -> str:
+                     kv_info: dict | None = None,
+                     gpu_compat: dict | None = None) -> str:
     """Use Azure OpenAI to provide a rich, contextual analysis of the model's memory footprint."""
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1")
 
@@ -552,6 +553,28 @@ def get_llm_analysis(model_id: str, model_info: dict, config: dict | None,
         for row in vram_table:
             context_parts.append(f"  {row['label']}: weights={row['model_size_gb']}GB + KV-cache={row['kv_cache_gb']}GB + overhead={row['activation_overhead_gb']}GB = total {row['vram_required_gb']}GB")
 
+    # Authoritative SKU list (the ONLY VMs the model is allowed to recommend)
+    context_parts.append("\nAuthoritative Azure VM SKU catalog (ONLY recommend SKUs from this list):")
+    for vm in GPU_DATABASE:
+        context_parts.append(
+            f"  - {vm['name']}: {vm['gpu']}, total VRAM={vm['vram_gb']}GB, "
+            f"{vm['gpus']}x GPU, {vm['bandwidth_gbs']}GB/s per GPU, "
+            f"{vm['bf16_tflops']} BF16 TFLOPS per GPU"
+        )
+
+    # Per-quantization fit summary computed by our deterministic logic
+    if gpu_compat:
+        context_parts.append("\nDeterministic fit table (use this — do not invent SKUs):")
+        for fmt, vms in gpu_compat.items():
+            fitting = [v for v in vms if v.get("fits")]
+            if fitting:
+                # Sort by GPU count, then VRAM (cheapest-first heuristic)
+                fitting_sorted = sorted(fitting, key=lambda v: (v["gpus"], v["vram_gb"]))
+                names = ", ".join(f"{v['name']} ({v['vram_gb']}GB)" for v in fitting_sorted[:6])
+                context_parts.append(f"  {fmt}: fits on -> {names}")
+            else:
+                context_parts.append(f"  {fmt}: NO single SKU in the catalog fits this VRAM requirement")
+
     context_str = "\n".join(context_parts)
 
     system_prompt = """You are an expert ML engineer specialising in LLM deployment and GPU memory optimisation.
@@ -562,8 +585,8 @@ Given metadata about a model and its calculated VRAM estimates, provide a concis
 3. **Deployment Tips** – practical advice for running this model (e.g. tensor parallelism, offloading, KV-cache optimisation, context length impact).
 4. **Context Length Impact** – how increasing context length affects VRAM (KV-cache scaling).
 5. **Multi-GPU Guidance** – when multi-GPU or model-parallelism is required and how to set it up.
-6. **Azure VM Compatibility** – Always show the cheapest Azure VM SKUs that can run the model at each quantisation level, based on the VRAM requirements. For example, NC first than ND.
-7. **Model-Specific Insights** – Determine if the model is an MoE model and how many parameters are in the experts vs. the base. Surface any exceptions for example. gpt-oss-120b can be run on a single NC40ads_H100_v5 because the experts are not loaded into memory, but a 70B dense model cannot.
+6. **Azure VM Compatibility** – Show the cheapest Azure VM SKUs that can run the model at each quantisation level. STRICT RULE: you MUST only name SKUs that appear verbatim in the "Authoritative Azure VM SKU catalog" provided in the user message. Do NOT invent or hallucinate SKU names (e.g. ND40rs_v2 is NOT in the catalog and must never be mentioned). Use the "Deterministic fit table" as the source of truth for which SKUs fit. If no SKU in the catalog fits, say so explicitly and suggest mitigations (offloading, lower context, smaller batch, more aggressive quantisation, or multi-GPU sharding within the listed SKUs).
+7. **Model-Specific Insights** – Determine if the model is an MoE model and how many parameters are in the experts vs. the base. Surface any exceptions for example. gpt-oss-120b can be run on a single NC40ads H100 v5 because the experts are not loaded into memory, but a 70B dense model cannot.
 
 Keep the response under 400 words. Use markdown formatting. Be specific to THIS model."""
 
@@ -659,7 +682,7 @@ def analyze():
             )
 
         # LLM analysis (included in response but not rendered in UI)
-        llm_analysis = get_llm_analysis(model_id, model_info, config, param_billions, vram_table, kv_info)
+        llm_analysis = get_llm_analysis(model_id, model_info, config, param_billions, vram_table, kv_info, gpu_compat)
 
         return jsonify({
             "model_id": model_info.get("modelId", model_id),
