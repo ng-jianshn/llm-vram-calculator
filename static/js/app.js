@@ -544,7 +544,7 @@ function collectBenchPayload() {
         payload.random_range_ratio = parseFloat(document.getElementById('bench-rand-ratio').value) || 0.0;
     } else {
         payload.dataset_path = document.getElementById('bench-dataset-path').value
-            || './ShareGPT_V3_unfiltered_cleaned_split.json';
+            || '/data/ShareGPT_V3_unfiltered_cleaned_split.json';
     }
     return payload;
 }
@@ -696,7 +696,7 @@ function _stateBadgeHtml(state) {
 }
 
 function _fmtTime(iso) {
-    if (!iso) return '—';
+    if (!iso) return 'ï¿½';
     try {
         const d = new Date(iso);
         return d.toLocaleString();
@@ -705,7 +705,7 @@ function _fmtTime(iso) {
 
 async function loadBenchmarkRuns(silent) {
     const tbody = document.getElementById('results-table-body');
-    if (!silent && tbody) tbody.innerHTML = '<tr><td colspan="6" class="results-empty">Loading…</td></tr>';
+    if (!silent && tbody) tbody.innerHTML = '<tr><td colspan="6" class="results-empty">Loadingï¿½</td></tr>';
     try {
         const r = await fetch('/api/benchmarks');
         const data = await r.json();
@@ -721,8 +721,8 @@ async function loadBenchmarkRuns(silent) {
                 <tr class="results-row" onclick="openBenchmarkDetail('${run.run_id}')">
                     <td><code>${run.run_id}</code></td>
                     <td>${_stateBadgeHtml(run.state)}</td>
-                    <td title="${run.model || ''}">${run.model || '—'}</td>
-                    <td>${run.gpu_sku || '—'}</td>
+                    <td title="${run.model || ''}">${run.model || 'ï¿½'}</td>
+                    <td>${run.gpu_sku || 'ï¿½'}</td>
                     <td>${run.requestor || 'unknown'}</td>
                     <td>${_fmtTime(run.submitted_at)}</td>
                 </tr>
@@ -749,11 +749,11 @@ function openBenchmarkDetail(runId) {
     detail.dataset.runId = runId;
     document.getElementById('detail-run-id').textContent = runId;
     document.getElementById('detail-state-badge').outerHTML =
-        `<span id="detail-state-badge" class="state-badge">loading…</span>`;
+        `<span id="detail-state-badge" class="state-badge">loadingï¿½</span>`;
     document.getElementById('detail-meta').innerHTML = '';
     document.getElementById('detail-error-block').classList.add('hidden');
     document.getElementById('detail-error').textContent = '';
-    document.getElementById('detail-logs').textContent = 'Loading…';
+    document.getElementById('detail-logs').textContent = 'Loadingï¿½';
     showResultsDetail();
     loadBenchmarkDetail(runId);
 }
@@ -805,7 +805,7 @@ async function loadBenchmarkDetail(runId, silent) {
         } else if (d.logs_error) {
             logsEl.textContent = `(logs not available: ${d.logs_error})`;
         } else if (d.state === 'provisioning') {
-            logsEl.textContent = 'Waiting for vLLM server to become ready…';
+            logsEl.textContent = 'Waiting for vLLM server to become readyï¿½';
         } else {
             logsEl.textContent = '(no output)';
         }
