@@ -636,3 +636,183 @@ document.addEventListener('keydown', (e) => {
         if (modal && !modal.classList.contains('hidden')) closeBenchModal();
     }
 });
+
+// ============== View routing (sidebar) ==============
+function showView(name, ev) {
+    if (ev) ev.preventDefault();
+    document.querySelectorAll('.sidebar-link').forEach(a => {
+        a.classList.toggle('active', a.dataset.view === name);
+    });
+    const cal = document.getElementById('view-calculator');
+    const res = document.getElementById('view-results');
+    if (name === 'results') {
+        cal.classList.add('hidden'); cal.classList.remove('view-active');
+        res.classList.remove('hidden'); res.classList.add('view-active');
+        showResultsList();
+        loadBenchmarkRuns();
+        startResultsAutoRefresh();
+    } else {
+        res.classList.add('hidden'); res.classList.remove('view-active');
+        cal.classList.remove('hidden'); cal.classList.add('view-active');
+        stopResultsAutoRefresh();
+    }
+}
+
+// ============== Signed-in user ==============
+async function loadCurrentUser() {
+    try {
+        const r = await fetch('/api/me');
+        const d = await r.json();
+        const el = document.getElementById('sidebar-user-name');
+        if (el) el.textContent = d.user || 'anonymous';
+    } catch (_) {
+        const el = document.getElementById('sidebar-user-name');
+        if (el) el.textContent = 'anonymous';
+    }
+}
+
+// ============== Results list ==============
+let _resultsRefreshTimer = null;
+
+function startResultsAutoRefresh() {
+    stopResultsAutoRefresh();
+    _resultsRefreshTimer = setInterval(() => {
+        const detail = document.getElementById('results-detail-view');
+        if (detail && !detail.classList.contains('hidden')) {
+            const rid = detail.dataset.runId;
+            if (rid) loadBenchmarkDetail(rid, /*silent*/true);
+        } else {
+            loadBenchmarkRuns(/*silent*/true);
+        }
+    }, 5000);
+}
+function stopResultsAutoRefresh() {
+    if (_resultsRefreshTimer) { clearInterval(_resultsRefreshTimer); _resultsRefreshTimer = null; }
+}
+
+function _stateBadgeHtml(state) {
+    const s = (state || 'unknown').toLowerCase();
+    return `<span class="state-badge state-${s}">${s}</span>`;
+}
+
+function _fmtTime(iso) {
+    if (!iso) return '—';
+    try {
+        const d = new Date(iso);
+        return d.toLocaleString();
+    } catch (_) { return iso; }
+}
+
+async function loadBenchmarkRuns(silent) {
+    const tbody = document.getElementById('results-table-body');
+    if (!silent && tbody) tbody.innerHTML = '<tr><td colspan="6" class="results-empty">Loading…</td></tr>';
+    try {
+        const r = await fetch('/api/benchmarks');
+        const data = await r.json();
+        if (!r.ok) {
+            tbody.innerHTML = `<tr><td colspan="6" class="results-empty error">${data.error || 'Failed to load runs.'}</td></tr>`;
+            return;
+        }
+        const runs = data.runs || [];
+        if (!runs.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="results-empty">No benchmark runs yet.</td></tr>';
+        } else {
+            tbody.innerHTML = runs.map(run => `
+                <tr class="results-row" onclick="openBenchmarkDetail('${run.run_id}')">
+                    <td><code>${run.run_id}</code></td>
+                    <td>${_stateBadgeHtml(run.state)}</td>
+                    <td title="${run.model || ''}">${run.model || '—'}</td>
+                    <td>${run.gpu_sku || '—'}</td>
+                    <td>${run.requestor || 'unknown'}</td>
+                    <td>${_fmtTime(run.submitted_at)}</td>
+                </tr>
+            `).join('');
+        }
+        const stamp = document.getElementById('results-last-refresh');
+        if (stamp) stamp.textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+    } catch (err) {
+        if (!silent) tbody.innerHTML = '<tr><td colspan="6" class="results-empty error">Network error loading runs.</td></tr>';
+    }
+}
+
+function showResultsList() {
+    document.getElementById('results-list-view').classList.remove('hidden');
+    document.getElementById('results-detail-view').classList.add('hidden');
+}
+function showResultsDetail() {
+    document.getElementById('results-list-view').classList.add('hidden');
+    document.getElementById('results-detail-view').classList.remove('hidden');
+}
+
+function openBenchmarkDetail(runId) {
+    const detail = document.getElementById('results-detail-view');
+    detail.dataset.runId = runId;
+    document.getElementById('detail-run-id').textContent = runId;
+    document.getElementById('detail-state-badge').outerHTML =
+        `<span id="detail-state-badge" class="state-badge">loading…</span>`;
+    document.getElementById('detail-meta').innerHTML = '';
+    document.getElementById('detail-error-block').classList.add('hidden');
+    document.getElementById('detail-error').textContent = '';
+    document.getElementById('detail-logs').textContent = 'Loading…';
+    showResultsDetail();
+    loadBenchmarkDetail(runId);
+}
+
+async function loadBenchmarkDetail(runId, silent) {
+    try {
+        const r = await fetch(`/api/benchmark/${encodeURIComponent(runId)}`);
+        const d = await r.json();
+        if (!r.ok) {
+            document.getElementById('detail-logs').textContent = d.error || 'Failed to load.';
+            return;
+        }
+        // State badge
+        const badge = document.getElementById('detail-state-badge');
+        if (badge) {
+            const s = (d.state || 'unknown').toLowerCase();
+            badge.className = `state-badge state-${s}`;
+            badge.textContent = s;
+        }
+        // Meta
+        const metaEl = document.getElementById('detail-meta');
+        const metaItems = [
+            ['Model', d.model],
+            ['GPU SKU', d.gpu_sku],
+            ['Dataset', d.dataset],
+            ['Requestor', d.requestor],
+            ['Submitted', _fmtTime(d.submitted_at)],
+            ['Namespace', d.namespace],
+            ['Job', d.job && d.job.name],
+            ['Pod', d.pod && d.pod.name],
+        ].filter(([, v]) => v);
+        metaEl.innerHTML = metaItems.map(([k, v]) =>
+            `<div class="meta-item"><span class="meta-key">${k}</span><span class="meta-val">${v}</span></div>`
+        ).join('');
+
+        // Error
+        const errBlock = document.getElementById('detail-error-block');
+        if (d.error) {
+            errBlock.classList.remove('hidden');
+            document.getElementById('detail-error').textContent = d.error;
+        } else {
+            errBlock.classList.add('hidden');
+        }
+
+        // Logs
+        const logsEl = document.getElementById('detail-logs');
+        if (d.logs && d.logs.trim()) {
+            logsEl.textContent = d.logs;
+        } else if (d.logs_error) {
+            logsEl.textContent = `(logs not available: ${d.logs_error})`;
+        } else if (d.state === 'provisioning') {
+            logsEl.textContent = 'Waiting for vLLM server to become ready…';
+        } else {
+            logsEl.textContent = '(no output)';
+        }
+    } catch (err) {
+        if (!silent) document.getElementById('detail-logs').textContent = 'Network error.';
+    }
+}
+
+// Init
+document.addEventListener('DOMContentLoaded', loadCurrentUser);

@@ -607,9 +607,26 @@ Keep the response under 400 words. Use markdown formatting. Be specific to THIS 
 
 # ---------- routes ----------
 
+def _current_user() -> str:
+    """Return the signed-in user from Easy Auth headers, or 'anonymous'."""
+    # Container Apps Easy Auth injects these headers after a successful sign-in.
+    for h in ("X-MS-CLIENT-PRINCIPAL-NAME",
+              "X-MS-CLIENT-PRINCIPAL-ID",
+              "X-Ms-Client-Principal-Name"):
+        v = request.headers.get(h)
+        if v:
+            return v
+    return "anonymous"
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/api/me", methods=["GET"])
+def whoami():
+    return jsonify({"user": _current_user()})
 
 
 @app.route("/api/analyze", methods=["POST"])
@@ -712,14 +729,25 @@ def analyze():
 def submit_benchmark():
     """Provision vLLM Deployment + Service + benchmark Job in Kubernetes."""
     payload = request.get_json(force=True) or {}
+    payload["requestor"] = _current_user()
     try:
         result = benchmark_k8s.submit_benchmark(payload)
-        return jsonify({"status": "submitted", **result})
+        return jsonify({"status": "submitted", "requestor": payload["requestor"], **result})
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         app.logger.exception("Failed to submit benchmark job")
         return jsonify({"error": f"Failed to submit benchmark: {e}"}), 500
+
+
+@app.route("/api/benchmarks", methods=["GET"])
+def list_benchmarks():
+    """List all benchmark runs (most recent first)."""
+    try:
+        return jsonify({"runs": benchmark_k8s.list_runs()})
+    except Exception as e:
+        app.logger.exception("Failed to list benchmarks")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/benchmark/<run_id>", methods=["GET"])

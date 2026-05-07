@@ -253,8 +253,16 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
         env=_hf_env(),
     )
 
+    annotations = {
+        "llm-calculator/requestor": str(payload.get("requestor") or "unknown"),
+        "llm-calculator/model": str(payload.get("model") or ""),
+        "llm-calculator/gpu-sku": str(payload.get("gpu_sku") or ""),
+        "llm-calculator/dataset": str(payload.get("dataset_name") or ""),
+    }
     job = client.V1Job(
-        metadata=client.V1ObjectMeta(name=name, labels=labels, namespace=NAMESPACE),
+        metadata=client.V1ObjectMeta(
+            name=name, labels=labels, annotations=annotations, namespace=NAMESPACE
+        ),
         spec=client.V1JobSpec(
             backoff_limit=0,
             ttl_seconds_after_finished=180,  # auto-clean Job 3min after completion
@@ -342,18 +350,96 @@ def submit_benchmark(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def get_status(run_id: str) -> dict[str, Any]:
-    """Lightweight status check for a previously submitted run."""
+def _derive_state(job_status, deploy_ready: bool) -> str:
+    """Derive a UI-friendly state from Job + Deployment status.
+
+    Possible values: provisioning | running | success | failed | unknown.
+    """
+    if job_status is None:
+        return "unknown"
+    if (job_status.succeeded or 0) > 0:
+        return "success"
+    if (job_status.failed or 0) > 0:
+        return "failed"
+    # Job exists, not terminated yet.
+    if (job_status.active or 0) > 0 and deploy_ready:
+        return "running"
+    return "provisioning"
+
+
+def _job_metadata(job) -> dict[str, Any]:
+    md = job.metadata
+    ann = md.annotations or {}
+    return {
+        "run_id": (md.labels or {}).get("llm-calculator/run-id") or md.name.replace("bench-", "", 1),
+        "job_name": md.name,
+        "namespace": md.namespace,
+        "requestor": ann.get("llm-calculator/requestor", "unknown"),
+        "model": ann.get("llm-calculator/model", ""),
+        "gpu_sku": ann.get("llm-calculator/gpu-sku", ""),
+        "dataset": ann.get("llm-calculator/dataset", ""),
+        "submitted_at": md.creation_timestamp.isoformat() if md.creation_timestamp else None,
+    }
+
+
+def _pod_for_job(core_v1, job_name: str):
+    """Return the most recent Pod created by the named Job, or None."""
+    pods = core_v1.list_namespaced_pod(
+        NAMESPACE, label_selector=f"job-name={job_name}"
+    )
+    if not pods.items:
+        return None
+    return sorted(
+        pods.items,
+        key=lambda p: p.metadata.creation_timestamp or 0,
+        reverse=True,
+    )[0]
+
+
+def list_runs() -> list[dict[str, Any]]:
+    """List all benchmark runs (most recent first)."""
     _load_kube()
     batch_v1 = client.BatchV1Api()
     apps_v1 = client.AppsV1Api()
+
+    label_selector = "app.kubernetes.io/managed-by=llm-calculator,llm-calculator/component=benchmark"
+    jobs = batch_v1.list_namespaced_job(NAMESPACE, label_selector=label_selector)
+
+    # Map run-id -> deployment readiness so we can distinguish provisioning vs running.
+    deploys = apps_v1.list_namespaced_deployment(NAMESPACE, label_selector=label_selector)
+    deploy_ready: dict[str, bool] = {}
+    for d in deploys.items:
+        rid = (d.metadata.labels or {}).get("llm-calculator/run-id")
+        if rid:
+            deploy_ready[rid] = (d.status.ready_replicas or 0) >= (d.spec.replicas or 1)
+
+    runs: list[dict[str, Any]] = []
+    for j in jobs.items:
+        meta = _job_metadata(j)
+        rid = meta["run_id"]
+        meta["state"] = _derive_state(j.status, deploy_ready.get(rid, False))
+        runs.append(meta)
+
+    runs.sort(key=lambda r: r.get("submitted_at") or "", reverse=True)
+    return runs
+
+
+def get_status(run_id: str) -> dict[str, Any]:
+    """Detailed status for a previously submitted run, including logs/error."""
+    _load_kube()
+    batch_v1 = client.BatchV1Api()
+    apps_v1 = client.AppsV1Api()
+    core_v1 = client.CoreV1Api()
 
     job_name = f"bench-{run_id}"
     deploy_name = f"vllm-{run_id}"
 
     out: dict[str, Any] = {"run_id": run_id, "namespace": NAMESPACE}
+
+    job = None
     try:
-        job = batch_v1.read_namespaced_job_status(job_name, NAMESPACE)
+        job = batch_v1.read_namespaced_job(job_name, NAMESPACE)
+        out.update(_job_metadata(job))
         out["job"] = {
             "name": job_name,
             "active": job.status.active or 0,
@@ -363,6 +449,7 @@ def get_status(run_id: str) -> dict[str, Any]:
     except ApiException as e:
         out["job"] = {"name": job_name, "error": e.reason}
 
+    deploy_ready = False
     try:
         dep = apps_v1.read_namespaced_deployment_status(deploy_name, NAMESPACE)
         out["deployment"] = {
@@ -370,8 +457,55 @@ def get_status(run_id: str) -> dict[str, Any]:
             "ready_replicas": dep.status.ready_replicas or 0,
             "replicas": dep.status.replicas or 0,
         }
+        deploy_ready = (dep.status.ready_replicas or 0) >= (dep.spec.replicas or 1)
     except ApiException as e:
         out["deployment"] = {"name": deploy_name, "error": e.reason}
+
+    out["state"] = _derive_state(job.status if job else None, deploy_ready)
+
+    # Pull benchmark pod logs / error reason where useful.
+    pod = None
+    try:
+        pod = _pod_for_job(core_v1, job_name)
+    except ApiException:
+        pod = None
+
+    if pod is not None:
+        out["pod"] = {
+            "name": pod.metadata.name,
+            "phase": pod.status.phase,
+        }
+        # Try to surface logs from the benchmark container.
+        try:
+            logs = core_v1.read_namespaced_pod_log(
+                pod.metadata.name, NAMESPACE,
+                container="benchmark", tail_lines=400,
+            )
+            out["logs"] = logs
+        except ApiException as e:
+            # Container may not have started yet (still in initContainer / pending).
+            out["logs"] = None
+            out["logs_error"] = e.reason
+
+        # If failed, surface a concise error message.
+        if out["state"] == "failed":
+            err_lines: list[str] = []
+            for cs in (pod.status.container_statuses or []):
+                term = cs.state and cs.state.terminated
+                if term and (term.exit_code or 0) != 0:
+                    err_lines.append(
+                        f"container '{cs.name}' exited {term.exit_code}: "
+                        f"{term.reason or ''} {term.message or ''}".strip()
+                    )
+            for cs in (pod.status.init_container_statuses or []):
+                term = cs.state and cs.state.terminated
+                if term and (term.exit_code or 0) != 0:
+                    err_lines.append(
+                        f"init '{cs.name}' exited {term.exit_code}: "
+                        f"{term.reason or ''} {term.message or ''}".strip()
+                    )
+            if err_lines:
+                out["error"] = "\n".join(err_lines)
 
     return out
 
