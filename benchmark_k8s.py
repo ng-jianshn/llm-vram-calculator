@@ -239,20 +239,20 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
     wait_cmd = (
         f"echo 'Waiting for vLLM at {svc_url}/health';"
         f"for i in $(seq 1 180); do "
-        f"  if wget -q -O- {svc_url}/health >/dev/null 2>&1; then "
+        f"  if curl -fsS {svc_url}/health >/dev/null 2>&1; then "
         f"    echo 'vLLM is ready'; break; "
         f"  fi; "
         f"  echo \"attempt $i...\"; sleep 10; "
         f"done; "
-        f"if ! wget -q -O- {svc_url}/health >/dev/null 2>&1; then "
+        f"if ! curl -fsS {svc_url}/health >/dev/null 2>&1; then "
         f"  echo 'vLLM never became ready'; exit 1; "
         f"fi"
     )
     if is_sharegpt:
         wait_cmd += (
-            f"; echo 'Downloading ShareGPT dataset...'; "
-            f": \"${{DATASET_URL:?DATASET_URL not set; create k8s secret dataset-urls/sharegpt_url}}\"; "
-            f"wget -q -O {dataset_dir}/{sharegpt_file} \"$DATASET_URL\" || exit 1; "
+            f"; echo \"Downloading ShareGPT dataset from $DATASET_URL\"; "
+            f"curl -fL --retry 5 --retry-delay 5 -o {dataset_dir}/{sharegpt_file} "
+            f"\"$DATASET_URL\" || exit 1; "
             f"ls -lh {dataset_dir}/{sharegpt_file}"
         )
 
@@ -264,12 +264,11 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
         init_env.append(
             client.V1EnvVar(
                 name="DATASET_URL",
-                value_from=client.V1EnvVarSource(
-                    secret_key_ref=client.V1SecretKeySelector(
-                        name=os.getenv("BENCHMARK_DATASET_SECRET", "dataset-urls"),
-                        key=os.getenv("BENCHMARK_SHAREGPT_URL_KEY", "sharegpt_url"),
-                        optional=False,
-                    )
+                value=os.getenv(
+                    "BENCHMARK_SHAREGPT_URL",
+                    "https://huggingface.co/datasets/anon8231489123/"
+                    "ShareGPT_Vicuna_unfiltered/resolve/main/"
+                    "ShareGPT_V3_unfiltered_cleaned_split.json",
                 ),
             )
         )
@@ -288,7 +287,7 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
 
     init_container = client.V1Container(
         name="wait-for-vllm",
-        image="busybox:1.36",
+        image="curlimages/curl:8.10.1",
         command=["/bin/sh", "-c", wait_cmd],
         env=init_env or None,
         volume_mounts=init_volume_mounts or None,
