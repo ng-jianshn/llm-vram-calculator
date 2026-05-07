@@ -148,9 +148,10 @@ def _build_serve_args(payload: dict[str, Any], svc_url: str) -> list[str]:
             "--random-range-ratio", str(float(payload.get("random_range_ratio", 0.0))),
         ]
     elif dataset == "sharegpt":
+        # Always use the in-pod path; the initContainer downloads the file here.
         args += [
             "--dataset-path",
-            payload.get("dataset_path", "/data/ShareGPT_V3_unfiltered_cleaned_split.json"),
+            "/data/ShareGPT_V3_unfiltered_cleaned_split.json",
         ]
     return args
 
