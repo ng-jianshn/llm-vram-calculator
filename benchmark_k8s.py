@@ -347,21 +347,21 @@ def submit_benchmark(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
     # Persist initial manifest so the run survives Job TTL deletion.
-    benchmark_storage.update_manifest(
-        run_id,
-        run_id=run_id,
-        namespace=NAMESPACE,
-        job_name=created_job.metadata.name,
-        deployment=deploy.metadata.name,
-        service=svc.metadata.name,
-        requestor=str(payload.get("requestor") or "unknown"),
-        model=str(payload.get("model") or ""),
-        gpu_sku=str(payload.get("gpu_sku") or ""),
-        dataset=str(payload.get("dataset_name") or ""),
-        submitted_at=submitted_at,
-        state="provisioning",
-        payload=payload,
-    )
+    benchmark_storage.save_manifest(run_id, {
+        "run_id": run_id,
+        "namespace": NAMESPACE,
+        "job_name": created_job.metadata.name,
+        "deployment": deploy.metadata.name,
+        "service": svc.metadata.name,
+        "requestor": str(payload.get("requestor") or "unknown"),
+        "model": str(payload.get("model") or ""),
+        "gpu_sku": str(payload.get("gpu_sku") or ""),
+        "dataset": str(payload.get("dataset_name") or ""),
+        "submitted_at": submitted_at,
+        "state": "provisioning",
+        "payload": payload,
+        "updated_at": benchmark_storage._now(),  # type: ignore[attr-defined]
+    })
 
     return {
         "run_id": run_id,
