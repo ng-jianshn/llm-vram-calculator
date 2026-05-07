@@ -24,17 +24,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download ShareGPT dataset
-        env:
-          DATASET_URL: ${{ vars.SHAREGPT_URL }}
-        run: |
-          set -euo pipefail
-          OUT=ShareGPT_V3_unfiltered_cleaned_split.json
-          : "${DATASET_URL:?Set repo Variable SHAREGPT_URL to the dataset download URL}"
-          echo "Downloading $DATASET_URL"
-          curl -fL --retry 5 --retry-delay 10 -o "$OUT" "$DATASET_URL"
-          ls -lh "$OUT"
-
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:

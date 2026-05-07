@@ -150,7 +150,7 @@ def _build_serve_args(payload: dict[str, Any], svc_url: str) -> list[str]:
     elif dataset == "sharegpt":
         args += [
             "--dataset-path",
-            payload.get("dataset_path", "./ShareGPT_V3_unfiltered_cleaned_split.json"),
+            payload.get("dataset_path", "/data/ShareGPT_V3_unfiltered_cleaned_split.json"),
         ]
     return args
 
@@ -231,20 +231,67 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
     svc_url = f"http://vllm-{run_id}.{NAMESPACE}.svc.cluster.local:8000"
     bench_args = _build_serve_args(payload, svc_url)
 
-    # initContainer waits for /health
+    is_sharegpt = (payload.get("dataset_name") or "").lower() == "sharegpt"
+    dataset_dir = "/data"
+    sharegpt_file = "ShareGPT_V3_unfiltered_cleaned_split.json"
+
+    # initContainer waits for /health, and (for sharegpt) downloads the dataset.
     wait_cmd = (
         f"echo 'Waiting for vLLM at {svc_url}/health';"
         f"for i in $(seq 1 180); do "
         f"  if wget -q -O- {svc_url}/health >/dev/null 2>&1; then "
-        f"    echo 'vLLM is ready'; exit 0; "
+        f"    echo 'vLLM is ready'; break; "
         f"  fi; "
         f"  echo \"attempt $i...\"; sleep 10; "
-        f"done; echo 'vLLM never became ready'; exit 1"
+        f"done; "
+        f"if ! wget -q -O- {svc_url}/health >/dev/null 2>&1; then "
+        f"  echo 'vLLM never became ready'; exit 1; "
+        f"fi"
     )
+    if is_sharegpt:
+        wait_cmd += (
+            f"; echo 'Downloading ShareGPT dataset...'; "
+            f": \"${{DATASET_URL:?DATASET_URL not set; create k8s secret dataset-urls/sharegpt_url}}\"; "
+            f"wget -q -O {dataset_dir}/{sharegpt_file} \"$DATASET_URL\" || exit 1; "
+            f"ls -lh {dataset_dir}/{sharegpt_file}"
+        )
+
+    init_env = []
+    init_volume_mounts = []
+    bench_volume_mounts = []
+    pod_volumes = []
+    if is_sharegpt:
+        init_env.append(
+            client.V1EnvVar(
+                name="DATASET_URL",
+                value_from=client.V1EnvVarSource(
+                    secret_key_ref=client.V1SecretKeySelector(
+                        name=os.getenv("BENCHMARK_DATASET_SECRET", "dataset-urls"),
+                        key=os.getenv("BENCHMARK_SHAREGPT_URL_KEY", "sharegpt_url"),
+                        optional=False,
+                    )
+                ),
+            )
+        )
+        init_volume_mounts.append(
+            client.V1VolumeMount(name="dataset", mount_path=dataset_dir)
+        )
+        bench_volume_mounts.append(
+            client.V1VolumeMount(name="dataset", mount_path=dataset_dir)
+        )
+        pod_volumes.append(
+            client.V1Volume(
+                name="dataset",
+                empty_dir=client.V1EmptyDirVolumeSource(size_limit="4Gi"),
+            )
+        )
+
     init_container = client.V1Container(
         name="wait-for-vllm",
         image="busybox:1.36",
         command=["/bin/sh", "-c", wait_cmd],
+        env=init_env or None,
+        volume_mounts=init_volume_mounts or None,
     )
 
     bench_container = client.V1Container(
@@ -253,6 +300,7 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
         command=bench_args[:1],   # "vllm"
         args=bench_args[1:],
         env=_hf_env(),
+        volume_mounts=bench_volume_mounts or None,
     )
 
     annotations = {
@@ -274,6 +322,7 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
                     init_containers=[init_container],
                     containers=[bench_container],
                     restart_policy="Never",
+                    volumes=pod_volumes or None,
                 ),
             ),
         ),
