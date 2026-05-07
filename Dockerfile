@@ -25,7 +25,6 @@ COPY benchmark_k8s.py benchmark_k8s.py
 COPY benchmark_storage.py benchmark_storage.py
 COPY templates/ templates/
 COPY static/ static/
-COPY ShareGPT_V3_unfiltered_cleaned_split.json ShareGPT_V3_unfiltered_cleaned_split.json
 
 # Flask listens on 5000
 EXPOSE 5000
