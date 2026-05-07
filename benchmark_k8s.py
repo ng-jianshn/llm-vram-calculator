@@ -597,14 +597,20 @@ def get_status(run_id: str) -> dict[str, Any]:
             "phase": pod.status.phase,
         }
         try:
-            logs = core_v1.read_namespaced_pod_log(
+            # Fetch raw bytes; tail_lines can split a multi-byte UTF-8 char
+            # mid-sequence, which makes the default strict-UTF-8 decode raise.
+            resp = core_v1.read_namespaced_pod_log(
                 pod.metadata.name, NAMESPACE,
                 container="benchmark", tail_lines=400,
+                _preload_content=False,
             )
-            out["logs"] = logs
+            out["logs"] = resp.data.decode("utf-8", errors="replace")
         except ApiException as e:
             out["logs"] = None
             out["logs_error"] = e.reason
+        except UnicodeDecodeError:
+            out["logs"] = None
+            out["logs_error"] = "log decode error"
 
         if out["state"] == "failed":
             err_lines: list[str] = []

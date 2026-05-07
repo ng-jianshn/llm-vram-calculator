@@ -1666,3 +1666,25 @@ body { padding-left: 220px; }
     white-space: pre-wrap;
     word-break: break-word;
 }
+
+/* =========================================
+   Loading spinner
+   ========================================= */
+.spinner {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    border: 2.5px solid rgba(165, 180, 252, 0.25);
+    border-top-color: var(--accent-light, #a5b4fc);
+    border-radius: 50%;
+    animation: spinner-rotate 0.8s linear infinite;
+    vertical-align: middle;
+}
+.spinner-sm {
+    width: 13px;
+    height: 13px;
+    border-width: 2px;
+}
+@keyframes spinner-rotate {
+    to { transform: rotate(360deg); }
+}

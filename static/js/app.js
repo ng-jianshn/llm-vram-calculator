@@ -705,7 +705,7 @@ function _fmtTime(iso) {
 
 async function loadBenchmarkRuns(silent) {
     const tbody = document.getElementById('results-table-body');
-    if (!silent && tbody) tbody.innerHTML = '<tr><td colspan="6" class="results-empty">Loading�</td></tr>';
+    if (!silent && tbody) tbody.innerHTML = '<tr><td colspan="6" class="results-empty"><span class="spinner" aria-label="Loading"></span></td></tr>';
     try {
         const r = await fetch('/api/benchmarks');
         const data = await r.json();
@@ -721,8 +721,8 @@ async function loadBenchmarkRuns(silent) {
                 <tr class="results-row" onclick="openBenchmarkDetail('${run.run_id}')">
                     <td><code>${run.run_id}</code></td>
                     <td>${_stateBadgeHtml(run.state)}</td>
-                    <td title="${run.model || ''}">${run.model || '�'}</td>
-                    <td>${run.gpu_sku || '�'}</td>
+                    <td title="${run.model || ''}">${run.model || '—'}</td>
+                    <td>${run.gpu_sku || '—'}</td>
                     <td>${run.requestor || 'unknown'}</td>
                     <td>${_fmtTime(run.submitted_at)}</td>
                 </tr>
@@ -749,11 +749,11 @@ function openBenchmarkDetail(runId) {
     detail.dataset.runId = runId;
     document.getElementById('detail-run-id').textContent = runId;
     document.getElementById('detail-state-badge').outerHTML =
-        `<span id="detail-state-badge" class="state-badge">loading�</span>`;
+        `<span id="detail-state-badge" class="state-badge"><span class="spinner spinner-sm" aria-label="Loading"></span></span>`;
     document.getElementById('detail-meta').innerHTML = '';
     document.getElementById('detail-error-block').classList.add('hidden');
     document.getElementById('detail-error').textContent = '';
-    document.getElementById('detail-logs').textContent = 'Loading�';
+    document.getElementById('detail-logs').innerHTML = '<span class="spinner" aria-label="Loading"></span>';
     showResultsDetail();
     loadBenchmarkDetail(runId);
 }
