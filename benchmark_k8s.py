@@ -18,6 +18,8 @@ import re
 import uuid
 from typing import Any
 
+import benchmark_storage
+
 # kubernetes is optional at import time so the calculator still runs locally
 try:
     from kubernetes import client, config  # type: ignore
@@ -339,6 +341,28 @@ def submit_benchmark(payload: dict[str, Any]) -> dict[str, Any]:
     apps_v1.create_namespaced_deployment(NAMESPACE, deploy)
     core_v1.create_namespaced_service(NAMESPACE, svc)
 
+    submitted_at = (
+        created_job.metadata.creation_timestamp.isoformat()
+        if created_job.metadata.creation_timestamp else None
+    )
+
+    # Persist initial manifest so the run survives Job TTL deletion.
+    benchmark_storage.update_manifest(
+        run_id,
+        run_id=run_id,
+        namespace=NAMESPACE,
+        job_name=created_job.metadata.name,
+        deployment=deploy.metadata.name,
+        service=svc.metadata.name,
+        requestor=str(payload.get("requestor") or "unknown"),
+        model=str(payload.get("model") or ""),
+        gpu_sku=str(payload.get("gpu_sku") or ""),
+        dataset=str(payload.get("dataset_name") or ""),
+        submitted_at=submitted_at,
+        state="provisioning",
+        payload=payload,
+    )
+
     return {
         "run_id": run_id,
         "namespace": NAMESPACE,
@@ -397,35 +421,73 @@ def _pod_for_job(core_v1, job_name: str):
 
 
 def list_runs() -> list[dict[str, Any]]:
-    """List all benchmark runs (most recent first)."""
-    _load_kube()
-    batch_v1 = client.BatchV1Api()
-    apps_v1 = client.AppsV1Api()
+    """List all benchmark runs (most recent first).
 
-    label_selector = "app.kubernetes.io/managed-by=llm-calculator,llm-calculator/component=benchmark"
-    jobs = batch_v1.list_namespaced_job(NAMESPACE, label_selector=label_selector)
+    Merges live Kubernetes Jobs with persisted blob manifests so that runs
+    whose k8s resources were already TTL-deleted still appear in the UI.
+    """
+    runs_by_id: dict[str, dict[str, Any]] = {}
 
-    # Map run-id -> deployment readiness so we can distinguish provisioning vs running.
-    deploys = apps_v1.list_namespaced_deployment(NAMESPACE, label_selector=label_selector)
-    deploy_ready: dict[str, bool] = {}
-    for d in deploys.items:
-        rid = (d.metadata.labels or {}).get("llm-calculator/run-id")
-        if rid:
-            deploy_ready[rid] = (d.status.ready_replicas or 0) >= (d.spec.replicas or 1)
+    # 1. Persisted manifests (the durable history).
+    for m in benchmark_storage.list_manifests():
+        rid = m.get("run_id")
+        if not rid:
+            continue
+        runs_by_id[rid] = {
+            "run_id": rid,
+            "job_name": m.get("job_name"),
+            "namespace": m.get("namespace") or NAMESPACE,
+            "requestor": m.get("requestor", "unknown"),
+            "model": m.get("model", ""),
+            "gpu_sku": m.get("gpu_sku", ""),
+            "dataset": m.get("dataset", ""),
+            "submitted_at": m.get("submitted_at"),
+            "state": m.get("state", "unknown"),
+        }
 
-    runs: list[dict[str, Any]] = []
-    for j in jobs.items:
-        meta = _job_metadata(j)
-        rid = meta["run_id"]
-        meta["state"] = _derive_state(j.status, deploy_ready.get(rid, False))
-        runs.append(meta)
+    # 2. Overlay live state from the cluster (authoritative while it exists).
+    try:
+        _load_kube()
+        batch_v1 = client.BatchV1Api()
+        apps_v1 = client.AppsV1Api()
 
+        label_selector = (
+            "app.kubernetes.io/managed-by=llm-calculator,"
+            "llm-calculator/component=benchmark"
+        )
+        jobs = batch_v1.list_namespaced_job(NAMESPACE, label_selector=label_selector)
+        deploys = apps_v1.list_namespaced_deployment(
+            NAMESPACE, label_selector=label_selector
+        )
+        deploy_ready: dict[str, bool] = {}
+        for d in deploys.items:
+            rid = (d.metadata.labels or {}).get("llm-calculator/run-id")
+            if rid:
+                deploy_ready[rid] = (d.status.ready_replicas or 0) >= (
+                    d.spec.replicas or 1
+                )
+
+        for j in jobs.items:
+            meta = _job_metadata(j)
+            rid = meta["run_id"]
+            meta["state"] = _derive_state(j.status, deploy_ready.get(rid, False))
+            runs_by_id[rid] = {**runs_by_id.get(rid, {}), **meta}
+    except Exception:  # noqa: BLE001
+        # If the k8s API is unreachable we still return the persisted view.
+        pass
+
+    runs = list(runs_by_id.values())
     runs.sort(key=lambda r: r.get("submitted_at") or "", reverse=True)
     return runs
 
 
 def get_status(run_id: str) -> dict[str, Any]:
-    """Detailed status for a previously submitted run, including logs/error."""
+    """Detailed status for a previously submitted run, including logs/error.
+
+    Live data from Kubernetes is preferred while it exists. Once the Job has
+    been TTL-deleted, the persisted blob manifest + logs are returned instead
+    so the UI keeps showing the run's final state and output.
+    """
     _load_kube()
     batch_v1 = client.BatchV1Api()
     apps_v1 = client.AppsV1Api()
@@ -433,8 +495,14 @@ def get_status(run_id: str) -> dict[str, Any]:
 
     job_name = f"bench-{run_id}"
     deploy_name = f"vllm-{run_id}"
+    persisted = benchmark_storage.load_manifest(run_id) or {}
 
     out: dict[str, Any] = {"run_id": run_id, "namespace": NAMESPACE}
+    # Seed with persisted metadata so callers always have model/sku/etc.
+    for key in ("requestor", "model", "gpu_sku", "dataset", "submitted_at",
+                "job_name", "deployment", "service"):
+        if persisted.get(key):
+            out[key] = persisted[key]
 
     job = None
     try:
@@ -461,9 +529,13 @@ def get_status(run_id: str) -> dict[str, Any]:
     except ApiException as e:
         out["deployment"] = {"name": deploy_name, "error": e.reason}
 
-    out["state"] = _derive_state(job.status if job else None, deploy_ready)
+    if job is not None:
+        out["state"] = _derive_state(job.status, deploy_ready)
+    else:
+        # Job no longer exists in cluster (TTL-deleted) — use persisted state.
+        out["state"] = persisted.get("state", "unknown")
 
-    # Pull benchmark pod logs / error reason where useful.
+    # Pull benchmark pod logs / error reason from the live pod where useful.
     pod = None
     try:
         pod = _pod_for_job(core_v1, job_name)
@@ -475,7 +547,6 @@ def get_status(run_id: str) -> dict[str, Any]:
             "name": pod.metadata.name,
             "phase": pod.status.phase,
         }
-        # Try to surface logs from the benchmark container.
         try:
             logs = core_v1.read_namespaced_pod_log(
                 pod.metadata.name, NAMESPACE,
@@ -483,11 +554,9 @@ def get_status(run_id: str) -> dict[str, Any]:
             )
             out["logs"] = logs
         except ApiException as e:
-            # Container may not have started yet (still in initContainer / pending).
             out["logs"] = None
             out["logs_error"] = e.reason
 
-        # If failed, surface a concise error message.
         if out["state"] == "failed":
             err_lines: list[str] = []
             for cs in (pod.status.container_statuses or []):
@@ -506,6 +575,31 @@ def get_status(run_id: str) -> dict[str, Any]:
                     )
             if err_lines:
                 out["error"] = "\n".join(err_lines)
+
+    # Fall back to persisted logs/error if the live pod is gone.
+    if out.get("logs") is None:
+        cached = benchmark_storage.load_logs(run_id)
+        if cached:
+            out["logs"] = cached
+    if not out.get("error") and persisted.get("error"):
+        out["error"] = persisted["error"]
+
+    # Persist any new state/logs/error so future reads survive Job TTL.
+    try:
+        update_fields: dict[str, Any] = {"state": out["state"]}
+        if out["state"] in ("success", "failed"):
+            if out.get("logs"):
+                benchmark_storage.save_logs(run_id, out["logs"])
+            if out.get("error"):
+                update_fields["error"] = out["error"]
+            if persisted.get("state") not in ("success", "failed"):
+                update_fields["completed_at"] = (
+                    benchmark_storage._now()  # type: ignore[attr-defined]
+                )
+        if update_fields.get("state") != persisted.get("state") or "error" in update_fields:
+            benchmark_storage.update_manifest(run_id, **update_fields)
+    except Exception:  # noqa: BLE001
+        pass
 
     return out
 
@@ -532,4 +626,10 @@ def cleanup(run_id: str) -> dict[str, Any]:
             deleted[kind] = name
         except ApiException as e:
             deleted[kind] = f"error: {e.reason}"
+    # Remove persisted manifest + logs so the run no longer shows up in the UI.
+    try:
+        benchmark_storage.delete_run(run_id)
+        deleted["blob"] = "deleted"
+    except Exception as e:  # noqa: BLE001
+        deleted["blob"] = f"error: {e}"
     return {"run_id": run_id, "deleted": deleted}
