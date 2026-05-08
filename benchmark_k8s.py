@@ -83,9 +83,20 @@ def _load_kube():
     if kubeconfig_b64:
         import base64
         import tempfile
+        # Strip whitespace/newlines that secret stores sometimes inject and
+        # re-pad so callers can paste either standard or raw base64.
+        cleaned = "".join(kubeconfig_b64.split())
+        cleaned += "=" * (-len(cleaned) % 4)
+        try:
+            decoded = base64.b64decode(cleaned, validate=False)
+        except Exception as e:
+            raise RuntimeError(
+                f"KUBECONFIG_B64 is not valid base64 ({e}). "
+                "Re-create the secret with `base64 -w 0 < kubeconfig`."
+            ) from e
         path = os.path.join(tempfile.gettempdir(), "kubeconfig")
         with open(path, "wb") as f:
-            f.write(base64.b64decode(kubeconfig_b64))
+            f.write(decoded)
         config.load_kube_config(config_file=path)
         return
 
@@ -541,11 +552,6 @@ def get_status(run_id: str) -> dict[str, Any]:
     been TTL-deleted, the persisted blob manifest + logs are returned instead
     so the UI keeps showing the run's final state and output.
     """
-    _load_kube()
-    batch_v1 = client.BatchV1Api()
-    apps_v1 = client.AppsV1Api()
-    core_v1 = client.CoreV1Api()
-
     job_name = f"bench-{run_id}"
     deploy_name = f"vllm-{run_id}"
     persisted = benchmark_storage.load_manifest(run_id) or {}
@@ -557,36 +563,52 @@ def get_status(run_id: str) -> dict[str, Any]:
         if persisted.get(key):
             out[key] = persisted[key]
 
-    job = None
+    # Try to load kubeconfig. If it fails (e.g. running outside the cluster
+    # without a valid kubeconfig), skip all live-cluster lookups and serve
+    # the persisted view from blob storage instead.
+    batch_v1 = None
+    apps_v1 = None
+    core_v1 = None
     try:
-        job = batch_v1.read_namespaced_job(job_name, NAMESPACE)
-        out.update(_job_metadata(job))
-        out["job"] = {
-            "name": job_name,
-            "active": job.status.active or 0,
-            "succeeded": job.status.succeeded or 0,
-            "failed": job.status.failed or 0,
-        }
-    except ApiException as e:
-        out["job"] = {"name": job_name, "error": e.reason}
-    except Exception as e:  # noqa: BLE001 – DNS/network failure, etc.
-        out["job"] = {"name": job_name, "error": "k8s api unreachable"}
-        log.warning("k8s read_namespaced_job failed: %s", e)
+        _load_kube()
+        batch_v1 = client.BatchV1Api()
+        apps_v1 = client.AppsV1Api()
+        core_v1 = client.CoreV1Api()
+    except Exception as e:  # noqa: BLE001
+        log.warning("k8s config unavailable, using persisted state only: %s", e)
+
+    job = None
+    if batch_v1 is not None:
+        try:
+            job = batch_v1.read_namespaced_job(job_name, NAMESPACE)
+            out.update(_job_metadata(job))
+            out["job"] = {
+                "name": job_name,
+                "active": job.status.active or 0,
+                "succeeded": job.status.succeeded or 0,
+                "failed": job.status.failed or 0,
+            }
+        except ApiException as e:
+            out["job"] = {"name": job_name, "error": e.reason}
+        except Exception as e:  # noqa: BLE001 – DNS/network failure, etc.
+            out["job"] = {"name": job_name, "error": "k8s api unreachable"}
+            log.warning("k8s read_namespaced_job failed: %s", e)
 
     deploy_ready = False
-    try:
-        dep = apps_v1.read_namespaced_deployment_status(deploy_name, NAMESPACE)
-        out["deployment"] = {
-            "name": deploy_name,
-            "ready_replicas": dep.status.ready_replicas or 0,
-            "replicas": dep.status.replicas or 0,
-        }
-        deploy_ready = (dep.status.ready_replicas or 0) >= (dep.spec.replicas or 1)
-    except ApiException as e:
-        out["deployment"] = {"name": deploy_name, "error": e.reason}
-    except Exception as e:  # noqa: BLE001
-        out["deployment"] = {"name": deploy_name, "error": "k8s api unreachable"}
-        log.warning("k8s read_namespaced_deployment_status failed: %s", e)
+    if apps_v1 is not None:
+        try:
+            dep = apps_v1.read_namespaced_deployment_status(deploy_name, NAMESPACE)
+            out["deployment"] = {
+                "name": deploy_name,
+                "ready_replicas": dep.status.ready_replicas or 0,
+                "replicas": dep.status.replicas or 0,
+            }
+            deploy_ready = (dep.status.ready_replicas or 0) >= (dep.spec.replicas or 1)
+        except ApiException as e:
+            out["deployment"] = {"name": deploy_name, "error": e.reason}
+        except Exception as e:  # noqa: BLE001
+            out["deployment"] = {"name": deploy_name, "error": "k8s api unreachable"}
+            log.warning("k8s read_namespaced_deployment_status failed: %s", e)
 
     if job is not None:
         out["state"] = _derive_state(job.status, deploy_ready)
@@ -596,15 +618,16 @@ def get_status(run_id: str) -> dict[str, Any]:
 
     # Pull benchmark pod logs / error reason from the live pod where useful.
     pod = None
-    try:
-        pod = _pod_for_job(core_v1, job_name)
-    except ApiException:
-        pod = None
-    except Exception as e:  # noqa: BLE001
-        log.warning("k8s _pod_for_job failed: %s", e)
-        pod = None
+    if core_v1 is not None:
+        try:
+            pod = _pod_for_job(core_v1, job_name)
+        except ApiException:
+            pod = None
+        except Exception as e:  # noqa: BLE001
+            log.warning("k8s _pod_for_job failed: %s", e)
+            pod = None
 
-    if pod is not None:
+    if pod is not None and core_v1 is not None:
         out["pod"] = {
             "name": pod.metadata.name,
             "phase": pod.status.phase,

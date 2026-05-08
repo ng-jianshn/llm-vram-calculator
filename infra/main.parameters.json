@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "resourceGroupName": { "value": "gpu-benchmark" },
+    "location": { "value": "centralus" },
+    "resourceGroupLocation": { "value": "southcentralus" },
+    "containerAppName": { "value": "automated-gpu-benchmark" },
+    "storageAccountName": { "value": "benchmarkdatangjason" },
+    "storageAccountResourceGroup": { "value": "gpu-benchmark" },
+    "storageContainerName": { "value": "runs" },
+    "acrName": { "value": "jianshn" },
+    "acrResourceGroup": { "value": "container-rg" },
+    "containerImage": { "value": "jianshn.azurecr.io/llm-sizing:latest" },
+    "entraClientId": { "value": "dd032e75-1b86-4478-a63c-b57ec7b5ccde" },
+    "vnetName": { "value": "aks-vnet-21444232" },
+    "vnetResourceGroup": { "value": "MC_gpu-benchmark_multi-gpu-benchmark_centralus" },
+    "containerAppSubnetName": { "value": "snet-containerapp" },
+    "containerAppSubnetPrefix": { "value": "10.226.0.0/27" },
+    "containerAppEnvInternal": { "value": false },
+    "kubeconfigB64": {
+      "reference": {
+        "keyVault": { "id": "/subscriptions/bb608350-d9c5-4b2a-b61e-6df4034dbf07/resourceGroups/gpu-benchmark/providers/Microsoft.KeyVault/vaults/gpu-benchmark-kv" },
+        "secretName": "kube-config"
+      }
+    },
+    "hfToken": {
+      "reference": {
+        "keyVault": { "id": "/subscriptions/bb608350-d9c5-4b2a-b61e-6df4034dbf07/resourceGroups/gpu-benchmark/providers/Microsoft.KeyVault/vaults/gpu-benchmark-kv" },
+        "secretName": "hf-token"
+      }
+    }
+  }
+}
