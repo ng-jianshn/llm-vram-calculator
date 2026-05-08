@@ -260,7 +260,7 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
     # Total wait: 12 attempts * 10s = 120s (2 minutes).
     wait_cmd = (
         f"echo 'Waiting for vLLM at {svc_url}/health';"
-        f"for i in $(seq 1 12); do "
+        f"for i in $(seq 1 354); do "
         f"  if curl -fsS {svc_url}/health >/dev/null 2>&1; then "
         f"    echo 'vLLM is ready'; break; "
         f"  fi; "
@@ -740,10 +740,24 @@ def get_status(run_id: str) -> dict[str, Any]:
             for cs in (pod.status.init_container_statuses or []):
                 term = cs.state and cs.state.terminated
                 if term and (term.exit_code or 0) != 0:
-                    err_lines.append(
-                        f"init '{cs.name}' exited {term.exit_code}: "
-                        f"{term.reason or ''} {term.message or ''}".strip()
-                    )
+                    # Special-case the wait-for-vllm initContainer: exit 1
+                    # means /health never responded within the wait window,
+                    # which almost always indicates GPU capacity issues.
+                    if cs.name == "wait-for-vllm":
+                        err_lines.append(
+                            "Timed out waiting for the vLLM serving pod to "
+                            "become ready. This is usually caused by GPU "
+                            "capacity constraints for the requested SKU "
+                            "(no node could be provisioned in time, or the "
+                            "model took too long to download / load on a "
+                            "freshly provisioned node). Please try again "
+                            "later or pick a different GPU SKU."
+                        )
+                    else:
+                        err_lines.append(
+                            f"init '{cs.name}' exited {term.exit_code}: "
+                            f"{term.reason or ''} {term.message or ''}".strip()
+                        )
             if err_lines:
                 out["error"] = "\n".join(err_lines)
 
