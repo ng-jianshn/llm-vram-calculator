@@ -325,13 +325,19 @@ for i in $(seq 1 354); do
       fi
     fi
     {
-      echo "vLLM serving pod failed to start after $MAX_RESTARTS restarts ($LAST)."
-      echo ""
-      echo "Last vLLM container logs:"
+      # Pull the most relevant single line from the vLLM log: prefer the
+      # last "ERROR" line; fall back to the last non-blank line.
+      ERR_LINE=""
       if [ -n "$VLLM_LOG" ]; then
-        echo "$VLLM_LOG"
+        ERR_LINE=$(echo "$VLLM_LOG" | grep -iE 'error|exception|traceback' | tail -n 1)
+        if [ -z "$ERR_LINE" ]; then
+          ERR_LINE=$(echo "$VLLM_LOG" | grep -v '^[[:space:]]*$' | tail -n 1)
+        fi
+      fi
+      if [ -n "$ERR_LINE" ]; then
+        echo "vLLM serving pod failed after $MAX_RESTARTS restarts ($LAST): $ERR_LINE"
       else
-        echo "(logs unavailable)"
+        echo "vLLM serving pod failed after $MAX_RESTARTS restarts ($LAST)."
       fi
     } | tee /dev/termination-log
     exit 1
