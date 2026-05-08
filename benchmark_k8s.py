@@ -342,7 +342,10 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
         ),
         spec=client.V1JobSpec(
             backoff_limit=0,
-            ttl_seconds_after_finished=180,  # auto-clean Job 3min after completion
+            # Keep the Job around well after completion so the status
+            # poller has time to observe the terminal state and persist
+            # it to blob storage before Kubernetes garbage-collects it.
+            ttl_seconds_after_finished=300,
             active_deadline_seconds=JOB_ACTIVE_DEADLINE_SECONDS,
             template=client.V1PodTemplateSpec(
                 metadata=client.V1ObjectMeta(labels=labels),
@@ -687,6 +690,22 @@ def get_status(run_id: str) -> dict[str, Any]:
 
     if job is not None:
         out["state"] = _derive_state(job.status, deploy_ready, unsched_age)
+        if out["state"] == "failed" and not out.get("error"):
+            # Prefer the Job-level failure condition (set by Kubernetes
+            # itself) over the dead pod's exit code — it explains *why*
+            # the Job failed (DeadlineExceeded, BackoffLimitExceeded, ...).
+            for cond in (job.status.conditions or []):
+                if cond.type == "Failed" and cond.status == "True":
+                    reason = cond.reason or "Failed"
+                    msg = cond.message or ""
+                    if reason == "DeadlineExceeded":
+                        out["error"] = (
+                            f"Benchmark exceeded the {JOB_ACTIVE_DEADLINE_SECONDS}s "
+                            f"deadline and was terminated by Kubernetes. {msg}"
+                        ).strip()
+                    else:
+                        out["error"] = f"{reason}: {msg}".strip(": ").strip()
+                    break
         if out["state"] == "failed" and unsched_age is not None and not out.get("error"):
             out["error"] = (
                 f"vLLM pod could not be scheduled for {int(unsched_age)}s "
