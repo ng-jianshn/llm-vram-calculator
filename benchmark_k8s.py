@@ -257,9 +257,10 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
     sharegpt_file = "ShareGPT_V3_unfiltered_cleaned_split.json"
 
     # initContainer waits for /health, and (for sharegpt) downloads the dataset.
+    # Total wait: 354 attempts * 10s = 3540s (just under the 1h Job deadline).
     wait_cmd = (
         f"echo 'Waiting for vLLM at {svc_url}/health';"
-        f"for i in $(seq 1 180); do "
+        f"for i in $(seq 1 354); do "
         f"  if curl -fsS {svc_url}/health >/dev/null 2>&1; then "
         f"    echo 'vLLM is ready'; break; "
         f"  fi; "
