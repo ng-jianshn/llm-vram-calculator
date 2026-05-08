@@ -646,6 +646,7 @@ def get_status(run_id: str) -> dict[str, Any]:
         log.warning("k8s config unavailable, using persisted state only: %s", e)
 
     job = None
+    job_missing = False  # True only when the API confirmed the Job is gone (404).
     if batch_v1 is not None:
         try:
             job = batch_v1.read_namespaced_job(job_name, NAMESPACE)
@@ -658,6 +659,8 @@ def get_status(run_id: str) -> dict[str, Any]:
             }
         except ApiException as e:
             out["job"] = {"name": job_name, "error": e.reason}
+            if getattr(e, "status", None) == 404:
+                job_missing = True
         except Exception as e:  # noqa: BLE001 – DNS/network failure, etc.
             out["job"] = {"name": job_name, "error": "k8s api unreachable"}
             log.warning("k8s read_namespaced_job failed: %s", e)
@@ -690,8 +693,17 @@ def get_status(run_id: str) -> dict[str, Any]:
                 f"(no GPU capacity matching the requested SKU)."
             )
     else:
-        # Job no longer exists in cluster (TTL-deleted) — use persisted state.
-        out["state"] = persisted.get("state", "unknown")
+        prev_state = persisted.get("state", "unknown")
+        # If the Job has been confirmed gone (404) but the persisted record
+        # still says the run was in progress, mark it failed — it cannot
+        # progress without a Job. This covers manual `kubectl delete` and
+        # the case where TTL cleanup ran before we observed completion.
+        if job_missing and prev_state in ("provisioning", "running"):
+            out["state"] = "failed"
+            if not out.get("error"):
+                out["error"] = "Benchmark Job no longer exists in the cluster."
+        else:
+            out["state"] = prev_state
 
     # Pull benchmark pod logs / error reason from the live pod where useful.
     pod = None
