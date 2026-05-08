@@ -309,10 +309,31 @@ for i in $(seq 1 354); do
     RESTARTS=$(echo "$POD_JSON" | jq -r '[.items[].status.containerStatuses[]?|select(.name=="vllm")|.restartCount] | max // 0')
   fi
   if [ "$RESTARTS" -ge "$MAX_RESTARTS" ]; then
-    LAST=$(echo "$POD_JSON" | jq -r '[.items[].status.containerStatuses[]?|select(.name=="vllm")|.lastState.terminated]|map(select(.))|.[0]|if . then "exit \(.exitCode) (\(.reason // "Error")): \(.message // "")" else "no termination details available" end')
-    MSG="vLLM serving pod failed to start after $MAX_RESTARTS restarts. Last container error: $LAST"
-    echo "$MSG"
-    echo "$MSG" > /dev/termination-log
+    POD_NAME=$(echo "$POD_JSON" | jq -r '.items[0].metadata.name // ""')
+    LAST=$(echo "$POD_JSON" | jq -r '[.items[].status.containerStatuses[]?|select(.name=="vllm")|.lastState.terminated]|map(select(.))|.[0]|if . then "exit \(.exitCode) (\(.reason // "Error"))" else "no termination details available" end')
+    # Fetch the last ~80 lines of the crashed vLLM container's logs.
+    # `previous=true` reads the just-terminated container instance so we
+    # capture the actual Python error/traceback, not the freshly-restarted
+    # process. Falls back to current logs if `previous` is unavailable.
+    VLLM_LOG=""
+    if [ -n "$POD_NAME" ]; then
+      VLLM_LOG=$(curl -fsS --cacert "$CACERT" -H "Authorization: Bearer $TOKEN" \
+        "$API/api/v1/namespaces/$NS/pods/$POD_NAME/log?container=vllm&previous=true&tailLines=80" 2>/dev/null || echo "")
+      if [ -z "$VLLM_LOG" ]; then
+        VLLM_LOG=$(curl -fsS --cacert "$CACERT" -H "Authorization: Bearer $TOKEN" \
+          "$API/api/v1/namespaces/$NS/pods/$POD_NAME/log?container=vllm&tailLines=80" 2>/dev/null || echo "")
+      fi
+    fi
+    {
+      echo "vLLM serving pod failed to start after $MAX_RESTARTS restarts ($LAST)."
+      echo ""
+      echo "Last vLLM container logs:"
+      if [ -n "$VLLM_LOG" ]; then
+        echo "$VLLM_LOG"
+      else
+        echo "(logs unavailable)"
+      fi
+    } | tee /dev/termination-log
     exit 1
   fi
   echo "attempt $i... (vllm restarts=$RESTARTS)"
