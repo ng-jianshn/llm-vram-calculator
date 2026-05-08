@@ -48,6 +48,16 @@ DATASET_PVC = os.getenv("BENCHMARK_DATASET_PVC", "")  # optional: PVC with Share
 # is failed by Kubernetes with reason=DeadlineExceeded.
 JOB_ACTIVE_DEADLINE_SECONDS = int(os.getenv("BENCHMARK_JOB_DEADLINE", "3600"))
 
+# Max times the vLLM serving container may restart before the init container
+# gives up and fails the benchmark Job (with the vLLM error in the
+# termination message).
+MAX_VLLM_RESTARTS = int(os.getenv("BENCHMARK_MAX_VLLM_RESTARTS", "3"))
+
+# ServiceAccount the benchmark Job pod runs as. Needs `get,list pods` in
+# the namespace so the init container can poll vLLM pod restart count via
+# the in-cluster K8s API. Provided by k8s/rbac.yaml.
+BENCHMARK_SERVICE_ACCOUNT = os.getenv("BENCHMARK_SERVICE_ACCOUNT", "llm-calculator")
+
 # Map our GPU DB names -> Azure VM instance type label values.
 # AKS labels nodes with `node.kubernetes.io/instance-type=Standard_<sku>`.
 GPU_SKU_INSTANCE_TYPE = {
@@ -256,29 +266,65 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
     dataset_dir = "/data"
     sharegpt_file = "ShareGPT_V3_unfiltered_cleaned_split.json"
 
-    # initContainer waits for /health, and (for sharegpt) downloads the dataset.
-    # Total wait: 12 attempts * 10s = 120s (2 minutes).
+    # initContainer waits for /health AND watches the vLLM Deployment's pod
+    # for crash-loops. If the vLLM container restarts more than
+    # MAX_VLLM_RESTARTS times, the init container writes vLLM's last
+    # terminated message to /dev/termination-log and exits 1, which fails
+    # the Job (backoff_limit=0). Total /health wait: 354 * 10s = 3540s.
+    #
+    # Dynamic values are injected as shell variables at the top so the
+    # rest of the script is plain sh/jq with no Python f-string escaping.
+    deploy_label = f"app=vllm-{run_id}"
     wait_cmd = (
-        f"echo 'Waiting for vLLM at {svc_url}/health';"
-        f"for i in $(seq 1 354); do "
-        f"  if curl -fsS {svc_url}/health >/dev/null 2>&1; then "
-        f"    echo 'vLLM is ready'; break; "
-        f"  fi; "
-        f"  echo \"attempt $i...\"; sleep 10; "
-        f"done; "
-        f"if ! curl -fsS {svc_url}/health >/dev/null 2>&1; then "
-        f"  echo 'vLLM never became ready'; exit 1; "
-        f"fi"
-    )
-    if is_sharegpt:
-        wait_cmd += (
-            f"; echo \"Downloading ShareGPT dataset from $DATASET_URL\"; "
-            f"curl -fL --retry 5 --retry-delay 5 -o {dataset_dir}/{sharegpt_file} "
-            f"\"$DATASET_URL\" || exit 1; "
-            f"ls -lh {dataset_dir}/{sharegpt_file}"
-        )
+        f'SVC_URL="{svc_url}"; '
+        f'LABEL="{deploy_label}"; '
+        f'MAX_RESTARTS={MAX_VLLM_RESTARTS}; '
+    ) + r"""
+apk add --no-cache curl jq >/dev/null 2>&1 || true
+set -u
+API=https://kubernetes.default.svc
+TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+echo "Waiting for vLLM at $SVC_URL/health (max $MAX_RESTARTS vllm restarts)"
+for i in $(seq 1 354); do
+  if curl -fsS "$SVC_URL/health" >/dev/null 2>&1; then
+    echo 'vLLM is ready'
+    if [ -n "${DATASET_URL:-}" ]; then
+      echo "Downloading dataset from $DATASET_URL"
+      curl -fL --retry 5 --retry-delay 5 -o "$DATASET_PATH" "$DATASET_URL" || {
+        MSG="Failed to download dataset from $DATASET_URL"
+        echo "$MSG"
+        echo "$MSG" > /dev/termination-log
+        exit 1
+      }
+      ls -lh "$DATASET_PATH"
+    fi
+    exit 0
+  fi
+  POD_JSON=$(curl -fsS --cacert "$CACERT" -H "Authorization: Bearer $TOKEN" \
+    "$API/api/v1/namespaces/$NS/pods?labelSelector=$LABEL" 2>/dev/null || echo '')
+  RESTARTS=0
+  if [ -n "$POD_JSON" ]; then
+    RESTARTS=$(echo "$POD_JSON" | jq -r '[.items[].status.containerStatuses[]?|select(.name=="vllm")|.restartCount] | max // 0')
+  fi
+  if [ "$RESTARTS" -ge "$MAX_RESTARTS" ]; then
+    LAST=$(echo "$POD_JSON" | jq -r '[.items[].status.containerStatuses[]?|select(.name=="vllm")|.lastState.terminated]|map(select(.))|.[0]|if . then "exit \(.exitCode) (\(.reason // "Error")): \(.message // "")" else "no termination details available" end')
+    MSG="vLLM serving pod failed to start after $MAX_RESTARTS restarts. Last container error: $LAST"
+    echo "$MSG"
+    echo "$MSG" > /dev/termination-log
+    exit 1
+  fi
+  echo "attempt $i... (vllm restarts=$RESTARTS)"
+  sleep 10
+done
+MSG="Timed out waiting for vLLM to become ready. This is usually caused by GPU capacity constraints for the requested SKU (no node could be provisioned in time, or the model took too long to download / load on a freshly provisioned node). Please try again later or pick a different GPU SKU."
+echo "$MSG"
+echo "$MSG" > /dev/termination-log
+exit 1
+"""
 
-    init_env = []
+    init_env: list = []
     init_volume_mounts = []
     bench_volume_mounts = []
     pod_volumes = []
@@ -292,6 +338,12 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
                     "ShareGPT_Vicuna_unfiltered/resolve/main/"
                     "ShareGPT_V3_unfiltered_cleaned_split.json",
                 ),
+            )
+        )
+        init_env.append(
+            client.V1EnvVar(
+                name="DATASET_PATH",
+                value=f"{dataset_dir}/{sharegpt_file}",
             )
         )
         init_volume_mounts.append(
@@ -309,7 +361,9 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
 
     init_container = client.V1Container(
         name="wait-for-vllm",
-        image="curlimages/curl:8.10.1",
+        # alpine (not curlimages/curl) so we can `apk add jq` at runtime.
+        # curlimages/curl runs as non-root and can't install packages.
+        image="alpine:3.19",
         command=["/bin/sh", "-c", wait_cmd],
         env=init_env or None,
         volume_mounts=init_volume_mounts or None,
@@ -347,6 +401,9 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
                     init_containers=[init_container],
                     containers=[bench_container],
                     restart_policy="Never",
+                    # Needed so the init container can poll vLLM pod
+                    # restart count via the in-cluster K8s API.
+                    service_account_name=BENCHMARK_SERVICE_ACCOUNT,
                     volumes=pod_volumes or None,
                 ),
             ),
@@ -740,19 +797,14 @@ def get_status(run_id: str) -> dict[str, Any]:
             for cs in (pod.status.init_container_statuses or []):
                 term = cs.state and cs.state.terminated
                 if term and (term.exit_code or 0) != 0:
-                    # Special-case the wait-for-vllm initContainer: exit 1
-                    # means /health never responded within the wait window,
-                    # which almost always indicates GPU capacity issues.
-                    if cs.name == "wait-for-vllm":
-                        err_lines.append(
-                            "Timed out waiting for the vLLM serving pod to "
-                            "become ready. This is usually caused by GPU "
-                            "capacity constraints for the requested SKU "
-                            "(no node could be provisioned in time, or the "
-                            "model took too long to download / load on a "
-                            "freshly provisioned node). Please try again "
-                            "later or pick a different GPU SKU."
-                        )
+                    # The wait-for-vllm initContainer writes a meaningful
+                    # message to /dev/termination-log before exiting (vLLM
+                    # restart-limit hit with the real error, or the GPU
+                    # capacity timeout). Surface that directly instead of
+                    # the generic exit-code line.
+                    msg = (term.message or "").strip()
+                    if cs.name == "wait-for-vllm" and msg:
+                        err_lines.append(msg)
                     else:
                         err_lines.append(
                             f"init '{cs.name}' exited {term.exit_code}: "
