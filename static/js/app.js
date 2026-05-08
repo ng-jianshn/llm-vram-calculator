@@ -803,7 +803,7 @@ async function loadBenchmarkDetail(runId, silent) {
         if (d.logs && d.logs.trim()) {
             logsEl.textContent = d.logs;
         } else if (d.logs_error) {
-            logsEl.textContent = `(logs not available: ${d.logs_error})`;
+            logsEl.textContent = '(logs not available, check again when state transits to RUNNING)';
         } else if (d.state === 'provisioning') {
             logsEl.textContent = 'Waiting for vLLM server to become ready�';
         } else {

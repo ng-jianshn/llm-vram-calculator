@@ -26,6 +26,13 @@ log = logging.getLogger(__name__)
 
 ACCOUNT = os.getenv("BENCHMARK_STORAGE_ACCOUNT", "benchmarkdatangjason")
 CONTAINER = os.getenv("BENCHMARK_STORAGE_CONTAINER", "runs")
+# Hostname suffix for the blob endpoint. Defaults to the Private Link
+# alias so traffic resolves to the private endpoint when the Container
+# App is wired into the same VNet / private DNS zone. Override with
+# "blob.core.windows.net" for public access, or set
+# BENCHMARK_STORAGE_ENDPOINT for a fully custom URL.
+ENDPOINT_SUFFIX = os.getenv("BENCHMARK_STORAGE_ENDPOINT_SUFFIX", "privatelink.blob.core.windows.net")
+ACCOUNT_URL = os.getenv("BENCHMARK_STORAGE_ENDPOINT", f"https://{ACCOUNT}.{ENDPOINT_SUFFIX}")
 
 try:
     from azure.identity import DefaultAzureCredential  # type: ignore
@@ -65,7 +72,7 @@ def _client():
         try:
             cred = DefaultAzureCredential()
             svc = BlobServiceClient(
-                account_url=f"https://{ACCOUNT}.blob.core.windows.net",
+                account_url=ACCOUNT_URL,
                 credential=cred,
             )
             cc = svc.get_container_client(CONTAINER)

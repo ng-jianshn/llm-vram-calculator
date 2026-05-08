@@ -13,12 +13,15 @@ be cleaned up together.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import uuid
 from typing import Any
 
 import benchmark_storage
+
+log = logging.getLogger(__name__)
 
 # kubernetes is optional at import time so the calculator still runs locally
 try:
@@ -134,6 +137,7 @@ def _build_serve_args(payload: dict[str, Any], svc_url: str) -> list[str]:
         "vllm", "bench", "serve",
         "--base-url", svc_url,
         "--model", model,
+        "--trust-remote-code",
         "--tokenizer", tokenizer,
         "--dataset-name", dataset,
         "--num-prompts", str(int(payload.get("num_prompts", 1000))),
@@ -565,6 +569,9 @@ def get_status(run_id: str) -> dict[str, Any]:
         }
     except ApiException as e:
         out["job"] = {"name": job_name, "error": e.reason}
+    except Exception as e:  # noqa: BLE001 – DNS/network failure, etc.
+        out["job"] = {"name": job_name, "error": "k8s api unreachable"}
+        log.warning("k8s read_namespaced_job failed: %s", e)
 
     deploy_ready = False
     try:
@@ -577,6 +584,9 @@ def get_status(run_id: str) -> dict[str, Any]:
         deploy_ready = (dep.status.ready_replicas or 0) >= (dep.spec.replicas or 1)
     except ApiException as e:
         out["deployment"] = {"name": deploy_name, "error": e.reason}
+    except Exception as e:  # noqa: BLE001
+        out["deployment"] = {"name": deploy_name, "error": "k8s api unreachable"}
+        log.warning("k8s read_namespaced_deployment_status failed: %s", e)
 
     if job is not None:
         out["state"] = _derive_state(job.status, deploy_ready)
@@ -589,6 +599,9 @@ def get_status(run_id: str) -> dict[str, Any]:
     try:
         pod = _pod_for_job(core_v1, job_name)
     except ApiException:
+        pod = None
+    except Exception as e:  # noqa: BLE001
+        log.warning("k8s _pod_for_job failed: %s", e)
         pod = None
 
     if pod is not None:
