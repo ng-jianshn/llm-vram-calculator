@@ -53,6 +53,12 @@ param openAiAccountName string = 'jianshn-eastus2-foundry'
 @description('Resource group of the existing Azure AI / OpenAI account.')
 param openAiResourceGroup string = 'jason-open-ai'
 
+@description('Existing AKS cluster the container app will run benchmark workloads on.')
+param aksClusterName string = 'multi-gpu-benchmark'
+
+@description('Resource group of the existing AKS cluster.')
+param aksResourceGroup string = 'gpu-benchmark'
+
 @description('Existing virtual network the Container Apps Environment will attach to.')
 param vnetName string = 'aks-vnet-21444232'
 
@@ -104,6 +110,8 @@ module resources 'resources.bicep' = {
     hfToken: hfToken
     openAiAccountName: openAiAccountName
     openAiResourceGroup: openAiResourceGroup
+    aksClusterName: aksClusterName
+    aksResourceGroup: aksResourceGroup
   }
 }
 

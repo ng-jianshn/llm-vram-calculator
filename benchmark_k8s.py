@@ -43,6 +43,18 @@ HF_SECRET_NAME = os.getenv("BENCHMARK_HF_SECRET", "hf-secret")
 HF_SECRET_KEY = os.getenv("BENCHMARK_HF_SECRET_KEY", "hf_api_token")
 DATASET_PVC = os.getenv("BENCHMARK_DATASET_PVC", "")  # optional: PVC with ShareGPT json
 
+# Wall-clock deadline for a benchmark run (covers GPU node provisioning,
+# model download, and the actual benchmark). After this elapses the Job
+# is failed by Kubernetes with reason=DeadlineExceeded.
+JOB_ACTIVE_DEADLINE_SECONDS = int(os.getenv("BENCHMARK_JOB_DEADLINE", "3600"))
+
+# How long the vLLM pod is allowed to remain Unschedulable before we mark
+# the run failed in the UI (so users don't wait for the full Job deadline
+# when there's clearly no GPU capacity).
+UNSCHEDULABLE_FAIL_AFTER_SECONDS = int(
+    os.getenv("BENCHMARK_UNSCHEDULABLE_FAIL_AFTER", "300")
+)
+
 # Map our GPU DB names -> Azure VM instance type label values.
 # AKS labels nodes with `node.kubernetes.io/instance-type=Standard_<sku>`.
 GPU_SKU_INSTANCE_TYPE = {
@@ -331,6 +343,7 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
         spec=client.V1JobSpec(
             backoff_limit=0,
             ttl_seconds_after_finished=180,  # auto-clean Job 3min after completion
+            active_deadline_seconds=JOB_ACTIVE_DEADLINE_SECONDS,
             template=client.V1PodTemplateSpec(
                 metadata=client.V1ObjectMeta(labels=labels),
                 spec=client.V1PodSpec(
@@ -438,10 +451,20 @@ def submit_benchmark(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _derive_state(job_status, deploy_ready: bool) -> str:
+def _derive_state(
+    job_status,
+    deploy_ready: bool,
+    deploy_unschedulable_age: float | None = None,
+) -> str:
     """Derive a UI-friendly state from Job + Deployment status.
 
     Possible values: provisioning | running | success | failed | unknown.
+
+    ``deploy_unschedulable_age`` is the number of seconds the vLLM pod has
+    been Pending with a ``PodScheduled=False`` / ``Unschedulable`` condition.
+    When that exceeds ``UNSCHEDULABLE_FAIL_AFTER_SECONDS`` the run is marked
+    failed even though the Job itself hasn't hit its activeDeadlineSeconds
+    yet, so users get fast feedback when there's no GPU capacity.
     """
     if job_status is None:
         return "unknown"
@@ -449,10 +472,51 @@ def _derive_state(job_status, deploy_ready: bool) -> str:
         return "success"
     if (job_status.failed or 0) > 0:
         return "failed"
+    if (
+        deploy_unschedulable_age is not None
+        and deploy_unschedulable_age >= UNSCHEDULABLE_FAIL_AFTER_SECONDS
+    ):
+        return "failed"
     # Job exists, not terminated yet.
     if (job_status.active or 0) > 0 and deploy_ready:
         return "running"
     return "provisioning"
+
+
+def _deploy_unschedulable_age(core_v1, deploy_name: str) -> float | None:
+    """Return seconds the vLLM Deployment's pod has been Unschedulable.
+
+    Returns ``None`` if the pod is missing, not Pending, or has been
+    successfully scheduled.
+    """
+    if core_v1 is None:
+        return None
+    try:
+        pods = core_v1.list_namespaced_pod(
+            NAMESPACE, label_selector=f"app={deploy_name}"
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if not pods.items:
+        return None
+    pod = sorted(
+        pods.items,
+        key=lambda p: p.metadata.creation_timestamp or 0,
+        reverse=True,
+    )[0]
+    if pod.status.phase != "Pending":
+        return None
+    for cond in (pod.status.conditions or []):
+        if (
+            cond.type == "PodScheduled"
+            and cond.status == "False"
+            and (cond.reason or "") == "Unschedulable"
+            and cond.last_transition_time is not None
+        ):
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            return (now - cond.last_transition_time).total_seconds()
+    return None
 
 
 def _job_metadata(job) -> dict[str, Any]:
@@ -531,10 +595,14 @@ def list_runs() -> list[dict[str, Any]]:
                     d.spec.replicas or 1
                 )
 
+        core_v1 = client.CoreV1Api()
         for j in jobs.items:
             meta = _job_metadata(j)
             rid = meta["run_id"]
-            meta["state"] = _derive_state(j.status, deploy_ready.get(rid, False))
+            unsched_age = _deploy_unschedulable_age(core_v1, f"vllm-{rid}")
+            meta["state"] = _derive_state(
+                j.status, deploy_ready.get(rid, False), unsched_age
+            )
             runs_by_id[rid] = {**runs_by_id.get(rid, {}), **meta}
     except Exception:  # noqa: BLE001
         # If the k8s API is unreachable we still return the persisted view.
@@ -610,8 +678,17 @@ def get_status(run_id: str) -> dict[str, Any]:
             out["deployment"] = {"name": deploy_name, "error": "k8s api unreachable"}
             log.warning("k8s read_namespaced_deployment_status failed: %s", e)
 
+    unsched_age = _deploy_unschedulable_age(core_v1, deploy_name)
+    if unsched_age is not None:
+        out["unschedulable_seconds"] = int(unsched_age)
+
     if job is not None:
-        out["state"] = _derive_state(job.status, deploy_ready)
+        out["state"] = _derive_state(job.status, deploy_ready, unsched_age)
+        if out["state"] == "failed" and unsched_age is not None and not out.get("error"):
+            out["error"] = (
+                f"vLLM pod could not be scheduled for {int(unsched_age)}s "
+                f"(no GPU capacity matching the requested SKU)."
+            )
     else:
         # Job no longer exists in cluster (TTL-deleted) — use persisted state.
         out["state"] = persisted.get("state", "unknown")

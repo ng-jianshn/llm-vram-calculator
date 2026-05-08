@@ -45,6 +45,12 @@ param openAiAccountName string
 @description('Resource group of the existing Azure AI / OpenAI account.')
 param openAiResourceGroup string
 
+@description('Existing AKS cluster name to grant Azure RBAC writer + cluster user roles on.')
+param aksClusterName string
+
+@description('Resource group of the existing AKS cluster.')
+param aksResourceGroup string
+
 @description('Name of the existing virtual network to attach the Container Apps Environment to.')
 param vnetName string
 
@@ -124,6 +130,15 @@ module openAiRole 'modules/openAiRole.bicep' = {
   }
 }
 
+module aksRoles 'modules/aksRoles.bicep' = {
+  name: 'role-aks'
+  scope: resourceGroup(aksResourceGroup)
+  params: {
+    aksClusterName: aksClusterName
+    principalId: appIdentity.properties.principalId
+  }
+}
+
 // ---------- Container App ----------
 module containerApp 'modules/containerApp.bicep' = {
   name: 'containerApp'
@@ -147,6 +162,7 @@ module containerApp 'modules/containerApp.bicep' = {
     acrRole
     storageRole
     openAiRole
+    aksRoles
   ]
 }
 
