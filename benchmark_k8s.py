@@ -257,10 +257,10 @@ def _build_benchmark_job(run_id: str, payload: dict, labels: dict):
     sharegpt_file = "ShareGPT_V3_unfiltered_cleaned_split.json"
 
     # initContainer waits for /health, and (for sharegpt) downloads the dataset.
-    # Total wait: 354 attempts * 10s = 3540s (just under the 1h Job deadline).
+    # Total wait: 12 attempts * 10s = 120s (2 minutes).
     wait_cmd = (
         f"echo 'Waiting for vLLM at {svc_url}/health';"
-        f"for i in $(seq 1 354); do "
+        f"for i in $(seq 1 12); do "
         f"  if curl -fsS {svc_url}/health >/dev/null 2>&1; then "
         f"    echo 'vLLM is ready'; break; "
         f"  fi; "
@@ -548,7 +548,46 @@ def list_runs() -> list[dict[str, Any]]:
             meta = _job_metadata(j)
             rid = meta["run_id"]
             meta["state"] = _derive_state(j.status, deploy_ready.get(rid, False))
-            runs_by_id[rid] = {**runs_by_id.get(rid, {}), **meta}
+            prev = runs_by_id.get(rid, {})
+            runs_by_id[rid] = {**prev, **meta}
+
+            # Persist terminal states immediately so the run keeps its
+            # final state after the Job is TTL-deleted, even if the user
+            # never opens the per-run detail page (which calls get_status).
+            if (
+                meta["state"] in ("success", "failed")
+                and prev.get("state") not in ("success", "failed")
+            ):
+                try:
+                    update_fields: dict[str, Any] = {
+                        "state": meta["state"],
+                        "completed_at": (
+                            benchmark_storage._now()  # type: ignore[attr-defined]
+                        ),
+                    }
+                    # Extract a meaningful error message from the Job's
+                    # Failed condition (DeadlineExceeded, BackoffLimitExceeded,
+                    # init container exit 1 from the /health wait loop, ...).
+                    if meta["state"] == "failed":
+                        for cond in (j.status.conditions or []):
+                            if cond.type == "Failed" and cond.status == "True":
+                                reason = cond.reason or "Failed"
+                                msg = cond.message or ""
+                                if reason == "DeadlineExceeded":
+                                    update_fields["error"] = (
+                                        f"Benchmark exceeded the "
+                                        f"{JOB_ACTIVE_DEADLINE_SECONDS}s "
+                                        f"deadline and was terminated by "
+                                        f"Kubernetes. {msg}"
+                                    ).strip()
+                                else:
+                                    update_fields["error"] = (
+                                        f"{reason}: {msg}".strip(": ").strip()
+                                    )
+                                break
+                    benchmark_storage.update_manifest(rid, **update_fields)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("failed to persist terminal state for %s: %s", rid, e)
     except Exception:  # noqa: BLE001
         # If the k8s API is unreachable we still return the persisted view.
         pass
