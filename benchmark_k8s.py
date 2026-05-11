@@ -329,9 +329,9 @@ for i in $(seq 1 354); do
       # last "ERROR" line; fall back to the last non-blank line.
       ERR_LINE=""
       if [ -n "$VLLM_LOG" ]; then
-        ERR_LINE=$(echo "$VLLM_LOG" | grep -iE 'error|exception|traceback' | tail -n 1)
+        ERR_LINE=$(echo "$VLLM_LOG" | grep -iE 'error|exception|traceback' | tail -n 5)
         if [ -z "$ERR_LINE" ]; then
-          ERR_LINE=$(echo "$VLLM_LOG" | grep -v '^[[:space:]]*$' | tail -n 1)
+          ERR_LINE=$(echo "$VLLM_LOG" | grep -v '^[[:space:]]*$' | tail -n 5)
         fi
       fi
       if [ -n "$ERR_LINE" ]; then
