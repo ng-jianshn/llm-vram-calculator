@@ -46,12 +46,13 @@ GPU_DATABASE = [
 
     # ---- NC-series RTX PRO 6000 Blackwell Server Edition (v6, Preview) — Inference / RAG / VDI ----
     # Per-GPU: 96 GB GDDR7, ~1792 GB/s, BF16 Tensor (dense) ~503 TFLOPS
-    {"name": "NC128ds_xl RTXPRO6000 v6",   "vram_gb": 96,   "gpu": "1× RTX PRO 6000 96G", "gpus": 1, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
-    {"name": "NC256ds_xl RTXPRO6000 v6",   "vram_gb": 192,  "gpu": "2× RTX PRO 6000 96G", "gpus": 2, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
-    {"name": "NC320ds_xl RTXPRO6000 v6",   "vram_gb": 192,  "gpu": "2× RTX PRO 6000 96G", "gpus": 2, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
-    {"name": "NC128lds_xl RTXPRO6000 v6",  "vram_gb": 96,   "gpu": "1× RTX PRO 6000 96G", "gpus": 1, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
-    {"name": "NC256lds_xl RTXPRO6000 v6",  "vram_gb": 192,  "gpu": "2× RTX PRO 6000 96G", "gpus": 2, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
-    {"name": "NC320lds_xl RTXPRO6000 v6",  "vram_gb": 192,  "gpu": "2× RTX PRO 6000 96G", "gpus": 2, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
+    # ARM SKU names include "BSE" (Blackwell Server Edition).
+    {"name": "NC128ds_xl RTXPRO6000BSE v6",   "vram_gb": 96,   "gpu": "1× RTX PRO 6000 96G", "gpus": 1, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
+    {"name": "NC256ds_xl RTXPRO6000BSE v6",   "vram_gb": 192,  "gpu": "2× RTX PRO 6000 96G", "gpus": 2, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
+    {"name": "NC320ds_xl RTXPRO6000BSE v6",   "vram_gb": 192,  "gpu": "2× RTX PRO 6000 96G", "gpus": 2, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
+    {"name": "NC128lds_xl RTXPRO6000BSE v6",  "vram_gb": 96,   "gpu": "1× RTX PRO 6000 96G", "gpus": 1, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
+    {"name": "NC256lds_xl RTXPRO6000BSE v6",  "vram_gb": 192,  "gpu": "2× RTX PRO 6000 96G", "gpus": 2, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
+    {"name": "NC320lds_xl RTXPRO6000BSE v6",  "vram_gb": 192,  "gpu": "2× RTX PRO 6000 96G", "gpus": 2, "series": "NC RTX PRO 6000", "bandwidth_gbs": 1792, "bf16_tflops": 503},
 
     # ---- ND-series A100 — Training / large-scale inference ----
     {"name": "ND96asr A100 v4",     "vram_gb": 320,  "gpu": "8× A100 40G","gpus": 8, "series": "ND A100",   "bandwidth_gbs": 1555, "bf16_tflops": 312},
