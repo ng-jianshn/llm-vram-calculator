@@ -225,6 +225,26 @@ def _build_deployment(run_id: str, model: str, n_gpus: int,
         containers=[container],
         node_selector=_node_selector(gpu_sku),
         restart_policy="Always",
+        # Tolerate the GPU taint applied by the Karpenter NodePool so general
+        # workloads (metrics-server, defender, CSI plugins, ...) stay off GPU
+        # nodes. Without this, those Deployments pin the GPU node and prevent
+        # Karpenter from reclaiming it after the benchmark finishes.
+        tolerations=[
+            client.V1Toleration(
+                key="nvidia.com/gpu",
+                operator="Equal",
+                value="true",
+                effect="NoSchedule",
+            ),
+            # sku=gpu:NoSchedule is the taint Karpenter applies on AKS by
+            # default when sku-gpu-count > 0; tolerate it too just in case.
+            client.V1Toleration(
+                key="sku",
+                operator="Equal",
+                value="gpu",
+                effect="NoSchedule",
+            ),
+        ],
         volumes=[
             client.V1Volume(
                 name="dshm",
