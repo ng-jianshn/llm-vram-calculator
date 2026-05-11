@@ -23,6 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app_aoai.py app.py
 COPY benchmark_k8s.py benchmark_k8s.py
 COPY benchmark_storage.py benchmark_storage.py
+COPY azure_pricing.py azure_pricing.py
 COPY templates/ templates/
 COPY static/ static/
 

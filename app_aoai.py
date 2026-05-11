@@ -9,6 +9,7 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from dotenv import load_dotenv
 
 import benchmark_k8s
+import azure_pricing
 
 load_dotenv()
 
@@ -488,11 +489,24 @@ def gpu_compatibility(vram_required: float, model_size_gb: float = 0,
                       param_billions: float = 0,
                       total_sequences: int = 1,
                       active_param_billions: float | None = None) -> list[dict]:
-    """Which Azure VM SKUs can run a given VRAM requirement, with theoretical TPM."""
+    """Which Azure VM SKUs can run a given VRAM requirement, with theoretical TPM.
+
+    Each entry is enriched with `hourly_usd_eastus`, `cost_per_million_tokens_usd`
+    and `available_in_eastus`. Fitting GPUs are sorted by lowest cost / M tokens
+    (rows without a cost fall back to vram_gb ascending).
+    """
+    sku_names = [vm["name"] for vm in GPU_DATABASE]
+    try:
+        pricing = azure_pricing.get_pricing(sku_names)
+    except Exception as e:  # noqa: BLE001
+        app.logger.warning("azure pricing unavailable: %s", e)
+        pricing = {}
+
     result = []
     for vm in GPU_DATABASE:
         fits = vm["vram_gb"] >= vram_required
         headroom = vm["vram_gb"] - vram_required
+        hourly = pricing.get(vm["name"])  # None = not available in region
         entry = {
             "name": vm["name"],
             "vram_gb": vm["vram_gb"],
@@ -501,6 +515,8 @@ def gpu_compatibility(vram_required: float, model_size_gb: float = 0,
             "series": vm["series"],
             "fits": fits,
             "headroom_gb": round(headroom, 2),
+            "hourly_usd_eastus": round(hourly, 4) if hourly is not None else None,
+            "available_in_eastus": hourly is not None,
         }
         # Add theoretical TPM if the model fits
         if fits and model_size_gb > 0 and param_billions > 0:
@@ -509,8 +525,28 @@ def gpu_compatibility(vram_required: float, model_size_gb: float = 0,
                 param_billions, total_sequences,
                 active_param_billions=active_param_billions,
             )
+            tps = entry["throughput"].get("output_tok_per_sec") or 0
+            if hourly and tps > 0:
+                cost_per_m = (hourly / (tps * 3600.0)) * 1_000_000.0
+                entry["cost_per_million_tokens_usd"] = round(cost_per_m, 4)
+            else:
+                entry["cost_per_million_tokens_usd"] = None
+        else:
+            entry["cost_per_million_tokens_usd"] = None
         result.append(entry)
-    result.sort(key=lambda g: g["vram_gb"])
+
+    # Sort: fits first, then by cost/M tokens ascending (cheapest first).
+    # Rows without a cost (no pricing or no throughput) sink to the bottom
+    # of their fits-bucket, ordered by vram for stability.
+    def _sort_key(g):
+        cost = g.get("cost_per_million_tokens_usd")
+        return (
+            0 if g["fits"] else 1,
+            0 if cost is not None else 1,
+            cost if cost is not None else 0.0,
+            g["vram_gb"],
+        )
+    result.sort(key=_sort_key)
     return result
 
 
@@ -710,6 +746,13 @@ def analyze():
             "vram_table": vram_table,
             "kv_info": kv_info,
             "gpu_compatibility": gpu_compat,
+            "unavailable_in_eastus": sorted({
+                g["name"]
+                for rows in gpu_compat.values()
+                for g in rows
+                if g.get("available_in_eastus") is False
+            }),
+            "pricing_region": azure_pricing.AZURE_REGION,
             "llm_analysis": llm_analysis,
             "architecture": config.get("architectures", ["unknown"])[0] if config else "unknown",
             "context_length": config.get("max_position_embeddings") if config else None,

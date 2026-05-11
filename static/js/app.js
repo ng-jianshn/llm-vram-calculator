@@ -414,10 +414,25 @@ function renderGPUCompat() {
     const grid = document.getElementById('gpu-grid');
     grid.innerHTML = '';
 
-    const sorted = [...gpus].sort((a, b) => {
-        if (a.fits !== b.fits) return a.fits ? -1 : 1;
-        return a.vram_gb - b.vram_gb;   // smallest first for fits
-    });
+    // Server already sorts: fits first, then cheapest cost / M tokens.
+    const sorted = gpus;
+
+    // Surface SKUs that aren't sold in the pricing region.
+    const region = currentData.pricing_region || 'eastus';
+    const unavailable = currentData.unavailable_in_eastus || [];
+    let banner = document.getElementById('gpu-unavailable-banner');
+    if (banner) banner.remove();
+    if (unavailable.length) {
+        banner = document.createElement('div');
+        banner.id = 'gpu-unavailable-banner';
+        banner.className = 'gpu-unavailable-banner';
+        banner.innerHTML = `
+            <strong>⚠️ Not available in ${region.toUpperCase()}:</strong>
+            ${unavailable.map((n) => `<code>${n}</code>`).join(', ')}
+            <div class="gpu-unavailable-note">These SKUs have no on-demand Linux pricing in ${region.toUpperCase()} and are excluded from cost ranking.</div>
+        `;
+        grid.parentNode.insertBefore(banner, grid);
+    }
 
     sorted.forEach((gpu) => {
         const item = document.createElement('div');
@@ -446,6 +461,19 @@ function renderGPUCompat() {
                 </div>`;
         }
 
+        let costHtml = '';
+        if (gpu.cost_per_million_tokens_usd != null) {
+            const cost = gpu.cost_per_million_tokens_usd;
+            const hourly = gpu.hourly_usd_eastus;
+            costHtml = `
+                <div class="gpu-cost">
+                    <div class="cost-main">$${cost.toFixed(3)} <span class="cost-unit">/ M tokens</span></div>
+                    <div class="cost-details">$${hourly?.toFixed(3) ?? '?'}/hr · EASTUS pay-as-you-go</div>
+                </div>`;
+        } else if (gpu.fits && gpu.available_in_eastus === false) {
+            costHtml = `<div class="gpu-cost gpu-cost-na">Not sold in EASTUS</div>`;
+        }
+
         const benchBtnHtml = (gpu.fits && BENCHMARK_ENABLED_VMS.has(gpu.name))
             ? `<button class="bench-run-btn" onclick="openBenchModal('${gpu.name.replace(/'/g, "\\'")}')">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
@@ -462,6 +490,7 @@ function renderGPUCompat() {
                 <span class="gpu-series-badge">${gpu.series}</span>
                 ${multiGpuNote}
                 ${throughputHtml}
+                ${costHtml}
                 ${benchBtnHtml}
             </div>
             <div class="gpu-status ${statusClass}">
