@@ -927,3 +927,64 @@ def cleanup(run_id: str) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         deleted["blob"] = f"error: {e}"
     return {"run_id": run_id, "deleted": deleted}
+
+
+# ---------- background reconciler ----------
+# Interval between reconciler ticks. Should be << ttl_seconds_after_finished
+# (currently 300s) so we observe terminal Jobs before Kubernetes GCs them.
+RECONCILER_INTERVAL_SECONDS = int(os.getenv("BENCHMARK_RECONCILER_INTERVAL", "30"))
+
+_reconciler_thread = None  # module-global so we don't start two of them.
+_reconciler_stop = None    # threading.Event used to signal shutdown
+
+
+def _reconciler_loop(stop_event):
+    """Periodically call list_runs() so terminal state + logs are persisted
+    to blob storage even when no user has the UI open.
+
+    list_runs() already handles the heavy lifting: it detects state
+    transitions to success/failed and saves the manifest + benchmark pod
+    logs before the Job's TTL deletes the pod.
+    """
+    log.info("benchmark reconciler started (interval=%ds)", RECONCILER_INTERVAL_SECONDS)
+    while not stop_event.is_set():
+        try:
+            runs = list_runs()
+            log.debug("reconciler tick: %d run(s) observed", len(runs))
+        except Exception as e:  # noqa: BLE001
+            # Swallow everything so a transient K8s/blob failure can't kill
+            # the thread. Next tick will retry.
+            log.warning("reconciler tick failed: %s", e)
+        # Use Event.wait so shutdown is responsive instead of sleeping full interval.
+        stop_event.wait(RECONCILER_INTERVAL_SECONDS)
+    log.info("benchmark reconciler stopped")
+
+
+def start_reconciler() -> bool:
+    """Start the background reconciler thread (idempotent).
+
+    Returns True if the thread was started by this call, False if a thread
+    was already running. Safe to call from Flask app startup.
+    """
+    global _reconciler_thread, _reconciler_stop
+    import threading
+    import atexit
+
+    if _reconciler_thread is not None and _reconciler_thread.is_alive():
+        return False
+
+    _reconciler_stop = threading.Event()
+    _reconciler_thread = threading.Thread(
+        target=_reconciler_loop,
+        args=(_reconciler_stop,),
+        name="benchmark-reconciler",
+        daemon=True,  # don't block process exit
+    )
+    _reconciler_thread.start()
+
+    # Best-effort graceful shutdown when the process exits.
+    def _shutdown():
+        if _reconciler_stop is not None:
+            _reconciler_stop.set()
+    atexit.register(_shutdown)
+    return True

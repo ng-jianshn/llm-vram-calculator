@@ -907,5 +907,28 @@ def chat():
         return jsonify({"error": f"Chat failed: {e}"}), 500
 
 
+# Start the background reconciler so benchmark Job state + logs are persisted
+# regardless of whether anyone has the UI open.
+#
+# Avoid starting twice in development. Werkzeug's auto-reloader runs the
+# module in two processes:
+#   - the parent (watches files; WERKZEUG_RUN_MAIN is unset; __name__=="__main__")
+#   - the child  (serves requests;  WERKZEUG_RUN_MAIN=="true")
+# In production WSGI (gunicorn etc.) __name__ is the module name, not "__main__",
+# and WERKZEUG_RUN_MAIN is unset — that's the one place we also want to start.
+def _should_start_reconciler() -> bool:
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        return True  # dev: reloader child
+    if __name__ != "__main__":
+        return True  # production WSGI worker
+    return False  # dev: reloader parent — skip
+
+if _should_start_reconciler():
+    try:
+        benchmark_k8s.start_reconciler()
+    except Exception as e:  # noqa: BLE001
+        app.logger.warning("failed to start benchmark reconciler: %s", e)
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
