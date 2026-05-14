@@ -236,14 +236,6 @@ def _build_deployment(run_id: str, model: str, n_gpus: int,
                 value="true",
                 effect="NoSchedule",
             ),
-            # sku=gpu:NoSchedule is the taint Karpenter applies on AKS by
-            # default when sku-gpu-count > 0; tolerate it too just in case.
-            client.V1Toleration(
-                key="sku",
-                operator="Equal",
-                value="gpu",
-                effect="NoSchedule",
-            ),
         ],
         volumes=[
             client.V1Volume(
@@ -631,6 +623,7 @@ def list_runs() -> list[dict[str, Any]]:
         _load_kube()
         batch_v1 = client.BatchV1Api()
         apps_v1 = client.AppsV1Api()
+        core_v1 = client.CoreV1Api()
 
         label_selector = (
             "app.kubernetes.io/managed-by=llm-calculator,"
@@ -692,6 +685,23 @@ def list_runs() -> list[dict[str, Any]]:
                     benchmark_storage.update_manifest(rid, **update_fields)
                 except Exception as e:  # noqa: BLE001
                     log.warning("failed to persist terminal state for %s: %s", rid, e)
+
+                # Capture benchmark pod logs before the Job's TTL deletes
+                # the pod. Without this, runs whose detail view is never
+                # opened in the ~5 min TTL window lose their logs entirely.
+                try:
+                    pod = _pod_for_job(core_v1, j.metadata.name)
+                    if pod is not None:
+                        resp = core_v1.read_namespaced_pod_log(
+                            pod.metadata.name, NAMESPACE,
+                            container="benchmark", tail_lines=2000,
+                            _preload_content=False,
+                        )
+                        logs_text = resp.data.decode("utf-8", errors="replace")
+                        if logs_text:
+                            benchmark_storage.save_logs(rid, logs_text)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("failed to capture logs for %s: %s", rid, e)
     except Exception:  # noqa: BLE001
         # If the k8s API is unreachable we still return the persisted view.
         pass
