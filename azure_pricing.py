@@ -36,6 +36,9 @@ _FALLBACK_REGIONS = [
     if r.strip()
 ]
 _CACHE_TTL_SECONDS = int(os.getenv("AZURE_PRICING_CACHE_TTL", str(24 * 3600)))
+# Null prices (SKU not sold on-demand anywhere we tried) get a shorter TTL
+# so a transient API hiccup doesn't pin a SKU as "unavailable" for 24 hours.
+_NULL_TTL_SECONDS = int(os.getenv("AZURE_PRICING_NULL_CACHE_TTL", "3600"))
 _CACHE_PATH = Path(
     os.getenv(
         "AZURE_PRICING_CACHE_PATH",
@@ -170,10 +173,11 @@ def get_pricing(
     to_fetch: list[str] = []
     for name in sku_names:
         entry = region_cache.get(name)
+        ttl = _CACHE_TTL_SECONDS if (isinstance(entry, dict) and entry.get("price") is not None) else _NULL_TTL_SECONDS
         if (
             use_cache
             and isinstance(entry, dict)
-            and (now - entry.get("ts", 0)) < _CACHE_TTL_SECONDS
+            and (now - entry.get("ts", 0)) < ttl
             and "price" in entry
         ):
             out[name] = entry["price"]
